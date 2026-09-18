@@ -165,4 +165,46 @@ EVICTED = [
     (0xF974, "95 AC", "jsr     DMPOKED", "dot store, turn point 4"),
 ]
 
-ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS), ("EVICTED", EVICTED)]
+# ---------------------------------------------------------------------------
+# M2a: the seams.
+#
+# Five places where control leaves a bank, found by the assembler rather than
+# by reading: packing each bank's regions makes every cross-bank reference an
+# undefined symbol. Two more are FALL-THROUGH seams, where a region simply runs
+# off its end into another bank with no symbol involved; those are not patches
+# and tools/dmbanks.py appends the switch itself.
+#
+# At all five, A, X and Y are dead -- each lands on an instruction that loads
+# its own registers -- so DMGOTO is free to clobber A and X and to carry the
+# entry index in Y. That is a happier position than Tennis, where Y had to
+# survive the switch and the seam had to be moved to suit.
+#
+# THE DOT ENGINE'S FOUR RETURNS ARE THE INTERESTING ONES. `JSR LF859` at $F228
+# is a CALL, and a bank switch resets the stack, so nothing can return through
+# one. The four outermost RTS sites of the LF859 subtree -- the ones that match
+# that JSR rather than an inner call -- each become a switch back to G0 at its
+# second entry. They were found by walking the subtree WITHOUT following JSRs,
+# which is what distinguishes an outermost return from an inner one; guessing
+# would have meant either a hang or a return into the middle of a table.
+SEAMS = [
+    (0xF228, "20 59 F8", "jmp     DMTOG1",  "G0 -> G1: into the dot engine"),
+    # A BRANCH CANNOT REACH A STUB, and that is not a detail of where the stub
+    # was put. The kernel is 476 bytes and this branch sits 371 bytes into it,
+    # so no position for the stub is within reach of both ends of the bank.
+    # Inverting the branch over a jump is the only shape that works, and it is
+    # the one place in this port where a patch is neither size- nor
+    # cycle-preserving: two bytes become five, and a taken branch becomes a
+    # branch plus a jump. It is the last instruction of the picture, with a
+    # WSYNC on the far side, so there is nothing left in the frame for it to
+    # push out of place -- `make frames` is the gate that says so.
+    (0xF3B7, "30 67",    "bpl     *+5\n        jmp     DMTOG3",
+     "G2 -> G3: kernel into overscan, branch inverted over a jump"),
+    (0xF4EF, "4C E4 F0", "jmp     DMTOG0",  "G3 -> G0: overscan to frame top"),
+    (0xF9E4, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
+    (0xFA4A, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
+    (0xFAB6, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
+    (0xFB23, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
+]
+
+ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS), ("EVICTED", EVICTED),
+       ("SEAMS", SEAMS)]

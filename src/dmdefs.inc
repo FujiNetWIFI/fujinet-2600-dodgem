@@ -242,6 +242,33 @@ DMAPPKEY EQU    27              ; Combat 24, Video Olympics 24, Dragster 25,
                                 ;   is shared by every game in the family.
 DMPORT  EQU     9603
 
+; ---------------- the banks, and the seams between them ----------------
+;
+; Four game banks, carved by frame PHASE rather than by address -- see
+; tools/dmphase.py. A bank switch is a jump, so everything that runs between
+; two switches has to be in one bank, including every subroutine it calls and
+; every table it reads.
+BANKG0  EQU     0               ; vblank, less the dot engine
+BANKG1  EQU     1               ; the dot engine ($F859 and its subtree)
+BANKG2  EQU     2               ; the display kernel
+BANKG3  EQU     3               ; overscan, and the cold path
+BANKBOOT EQU    4               ; cold start, session, text screens
+
+; Some banks are entered at more than one place, so DMGOTO takes an entry index
+; in Y as well as a bank in A. That costs nothing here: at every one of the
+; five seams A, X and Y are all dead -- each seam lands on an instruction that
+; loads its own registers -- which is a happier position than Tennis was in,
+; where Y had to survive the switch and the seam had to move to suit.
+DMEN_TOP EQU    0               ; G0: the top of the frame ($F0E4)
+DMEN_DOT EQU    1               ; G0: resume after the dot engine ($F22B)
+DMEN_OVR EQU    0               ; G3: the overscan band ($F420)
+DMEN_CLD EQU    1               ; G3: the cold path ($F0CA)
+
+; DMGOTO's address is fixed HERE and dmtail.asm ORGs to it, so the two cannot
+; drift apart. It must be first in the tail: it is the one address every bank
+; has to know before anything else is assembled.
+DMGOTO  EQU     FNTAIL
+
 ; ---------------- the variation whitelist ----------------
 ;
 ; SELECT walks TWO quantities, not one. $F162 advances $94's mode bits through

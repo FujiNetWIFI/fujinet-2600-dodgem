@@ -40,6 +40,38 @@ sys.path.insert(0, "build")
 import patches as patchmap
 from dmregions import BANK_REGIONS
 
+# Where each bank is entered, in order of entry index. DMGOTO carries the
+# index in Y and every bank's $1000 dispatcher reads it.
+#
+# Stock's $F000 `JMP LF0CA` is in no bank -- dmphase excludes it -- so $1000 is
+# free for the dispatcher, and it can be as long as it needs to be rather than
+# the three bytes the siblings had to squeeze into.
+ENTRIES = {
+    "G0": [(0xF0E4, "the top of the frame"),
+           (0xF22B, "resume, after the dot engine")],
+    "G1": [(0xF859, "the dot engine")],
+    "G2": [(0xF244, "the vblank spin, then the picture")],
+    "G3": [(0xF420, "the overscan band"),
+           (0xF0CA, "the cold path")],
+}
+
+# The bank-local switch stubs the seam patches jump to. A branch cannot reach
+# another bank, but it can reach one of these.
+STUBS = {
+    "G0": [("DMTOG1", "BANKG1", 0, "into the dot engine"),
+           ("DMTOG2", "BANKG2", 0, "into the kernel -- the fall-through at $F243")],
+    "G1": [("DMTOG0R", "BANKG0", 1, "back to G0, resuming after the dot engine")],
+    "G2": [("DMTOG3", "BANKG3", 0, "into the overscan band")],
+    "G3": [("DMTOG0", "BANKG0", 0, "to the top of the next frame")],
+}
+
+# Regions that run off their end into another bank, with no reference for the
+# assembler to catch. The switch is appended after the region.
+FALLTHROUGH = {
+    ("G0", 0xF243): ("DMTOG2", "the vblank band ends; the kernel is in G2"),
+    ("G3", 0xF0E3): ("DMTOG0", "the cold path falls into the frame top, in G0"),
+}
+
 WINDOW = 0x1000
 BANK_SIZE = 0x800
 DMPOKE_SIZE = 0x30      # src/dmpoke.inc, measured; the build asserts it below
@@ -161,14 +193,56 @@ def main():
             out.extend(anchors)
             out.append("")
 
+        # ---- the entry dispatcher, at $1000 ----
         cursor = WINDOW
+        ents = ENTRIES[bank]
+        out.append("        ORG     $%04X" % WINDOW)
+        out.append("; bank entry. DMGOTO leaves the entry index in Y.")
+        dispatch = []
+        if len(ents) == 1:
+            dispatch.append("        jmp     L%04X           ; %s"
+                            % (ents[0][0], ents[0][1]))
+        else:
+            for i, (tgt, why) in enumerate(ents[1:], 1):
+                dispatch.append("        cpy     #%d" % i)
+                dispatch.append("        beq     DMEN%d" % i)
+            dispatch.append("        jmp     L%04X           ; entry 0: %s"
+                            % (ents[0][0], ents[0][1]))
+            for i, (tgt, why) in enumerate(ents[1:], 1):
+                dispatch.append("DMEN%d:  jmp     L%04X           ; entry %d: %s"
+                                % (i, tgt, i, why))
+        out.extend(dispatch)
+        cursor += sum(3 if l.strip().startswith(("jmp", "DMEN")) else 2
+                      for l in dispatch)
+
+        # ---- the bank-local switch stubs ----
+        for name, bk, ent, why in STUBS.get(bank, []):
+            out.append("%s: lda     #%s           ; %s" % (name, bk, why))
+            out.append("        ldy     #%d" % ent)
+            out.append("        jmp     DMGOTO")
+            cursor += 7
+
+        # ONE ORG, at $1000, and everything after it flows on.
+        #
+        # The first version gave each region its own ORG at a cursor this file
+        # computed from the STOCK size of every line. That is wrong the moment
+        # a patch changes size, and several do: four RTS sites become jumps,
+        # the evicted reads become absolute, and the kernel's exit branch is
+        # inverted over a jump. The cursor undercounted by three and the next
+        # region was ORG'd three bytes inside the previous one -- which AS
+        # reports as "overlapping memory allocation" and then silently lets the
+        # later write win.
+        #
+        # So the sizes are not computed here at all. The assembler packs them,
+        # which it is for, and tools/checkbanks.py reads the real figure off
+        # the listing afterwards.
         for lo, hi in runs:
-            out.append("        ORG     $%04X       ; stock $%04X-$%04X"
-                       % (cursor, lo, hi))
+            out.append("; ---- stock $%04X-$%04X ----" % (lo, hi))
             for n in sorted(addrs):
                 a, nb = addrs[n]
                 if not lo <= a <= hi:
                     continue
+                _ = nb
                 line = src[n - 1]
                 if a in patched:
                     new, why = patched[a]
@@ -180,9 +254,16 @@ def main():
                     # entirely, which reads as a missing bank rather than as a
                     # broken patch.
                     lab = label_of(line)
-                    line = "%-7s %-24s; PATCHED: %s" % (lab or "", new, why)
+                    head, _, tail = new.partition("\n")
+                    line = "%-7s %-24s; PATCHED: %s" % (lab or "", head, why)
+                    if tail:
+                        line = line + "\n" + tail
                 out.append(line)
                 cursor += nb
+            ft = FALLTHROUGH.get((bank, hi))
+            if ft:
+                out.append("        jmp     %-15s ; SEAM: %s" % (ft[0], ft[1]))
+                cursor += 3
         # DMPOKED/DMPOKEB are leaves, called from three of the four banks.
         # A bank that is not mapped cannot be called into, so each caller
         # carries its own copy -- Dragster's PORTING.md 4, where StageRace
@@ -190,16 +271,18 @@ def main():
         # in both banks. Fifty bytes here, against hundreds spare.
         if any("DMPOKE" in l for l in out):
             out.append("")
-            out.append("        ORG     $%04X" % cursor)
             out.append('        INCLUDE "dmpoke.inc"')
             cursor += DMPOKE_SIZE
 
+        # A stock-size estimate only: what this bank would be if no patch
+        # changed length. checkbanks.py has the real number.
         size = cursor - WINDOW
         report.append((bank, len(runs), size))
         path = "%s/dm%s.asm" % (outdir, bank.lower())
         open(path, "w").write("\n".join(out) + "\n")
 
-    print("dmbanks: bank   regions   bytes   of %d" % BANK_SIZE)
+    print("dmbanks: bank   regions   est.    of %d  (checkbanks has the real"
+          " figure)" % BANK_SIZE)
     bad = False
     for bank, nr, size in report:
         flag = "%d spare" % (BANK_SIZE - size)

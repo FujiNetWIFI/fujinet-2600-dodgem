@@ -20,9 +20,9 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem ladder clean
 
-all: verify-org
+all: dodgem
 
 # ---------------------------------------------------------------- M0a
 # The disassembly itself. There is no published commented source for Dodge 'Em,
@@ -96,7 +96,14 @@ echo: probe
 banks: phase
 	./build.sh banks
 
-ladder: defs verify-org zp phase anchors banks probe
+# ---------------------------------------------------------------- M2
+# The image: 7 banks of 2K plus the fixed half, 16384 bytes. Structural only
+# so far -- the game still reads its own console -- so a split build must play
+# EXACTLY like stock, which is what `make det` is for.
+dodgem:
+	./build.sh
+
+ladder: defs verify-org zp phase anchors banks probe dodgem
 
 defs:
 	./build.sh defs

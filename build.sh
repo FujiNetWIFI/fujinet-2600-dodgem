@@ -85,6 +85,29 @@ FB_RAW=FN_BLIT_RAW,FB_TEXT=FN_BLIT_TEXT,FB_PATH=FN_BLIT_PATH,\
 FNBGEN=FN_B_BLITGEN
 }
 
+# p2bin, and the overlap check.
+#
+# AS does not complain when two ORGs put code on top of each other -- it
+# records both and moves on. p2bin is where it surfaces, as "overlapping
+# memory allocation!", and it is a WARNING there too: the later record simply
+# wins and part of a bank is silently gone.
+#
+# In a port whose banks are PACKED that is not a cosmetic complaint, it is the
+# failure mode of the whole scheme, so it is fatal here. It has already caught
+# one real instance: the region cursor computed from stock instruction sizes,
+# against patches that change size.
+p2bin() {  # p2bin <in.p> <out.bin> <args...>
+    local out
+    out=$("$P2BIN" "$@" 2>&1)
+    [ -n "$out" ] && echo "$out"
+    if echo "$out" | grep -q "overlapping"; then
+        echo "build.sh: $1 has overlapping regions -- part of it was silently" \
+             "overwritten. Refusing to build." >&2
+        exit 1
+    fi
+    return 0
+}
+
 # An image carrying "FUJI" at $1F10 promises it is a FujiNet client, so the
 # mailbox stays live after it boots. Without it the cartridge treats the image
 # as an ordinary game and the mailbox goes dead the moment it starts.
@@ -99,7 +122,11 @@ stampclaim() {
 # AS writes its .p and .lst next to the source, so assemble from the source's
 # own directory and collect the artefacts into build/.
 assemble() {  # assemble <basename> [srcdir]
-    local b=$1 d=${2:-src}
+    local b=$1 d=${2:-src} out
+    # AS reports an overlap as a WARNING and carries on, letting the later
+    # write win. In a packed bank that is not a cosmetic complaint: it means
+    # two regions were placed on top of each other and some of one of them is
+    # simply gone. Treat it as fatal.
     ( cd "$d" && "$AS" -q -L -i . -i "$HERE/src" -i "$HERE/build" "$b.asm" )
     if [ "$d" != "build" ]; then
         mv "$d/$b.p" "build/$b.p"
@@ -141,7 +168,7 @@ if [ "${1:-}" = "verify-org" ]; then
     python3 tools/checkmap.py rom/dodgem.bin tools/dodgem.cfg
     python3 tools/dasm2as.py rom/dodgem.asm > build/dm_org.asm
     assemble dm_org build
-    "$P2BIN" build/dm_org.p build/dm_org.bin -r '$F000-$FFFF' -l 255 -q
+    p2bin build/dm_org.p build/dm_org.bin -r '$F000-$FFFF' -l 255 -q
     rm -f build/dm_org.p
     cmp build/dm_org.bin rom/dodgem.bin
     echo "verify-org: byte-identical ($(stat -c%s build/dm_org.bin) bytes)"
@@ -212,7 +239,7 @@ if [ "${1:-}" = "probe" ]; then
 
     assemble probe
     python3 tools/checkbanks.py build/probe.lst $((0x1800)) probe
-    "$P2BIN" build/probe.p build/probe.bin -r '$1000-$1FFF' -l 255 -q
+    p2bin build/probe.p build/probe.bin -r '$1000-$1FFF' -l 255 -q
     rm -f build/probe.p
     stampclaim build/probe.bin
     python3 tools/checkrom_filter.py "$VCS/tools/checkrom.py" build/probe.bin \
@@ -244,5 +271,52 @@ if [ "${1:-}" = "phase" ]; then
     exit 0
 fi
 
-echo "build.sh: nothing else is implemented yet -- see PORTING.md for the ladder" >&2
-exit 1
+# ---------------- the client ----------------
+#
+# (N+1) x 2048: N banks at $1000-$17FF then the 2K fixed half. MAME's
+# vcs_cart_slot_device::call_load() accepts only 4096/8192/16384/32768, so N is
+# 1, 3, 7 or 15 and nothing between -- this is 7 banks and 16384 bytes.
+#
+# Banks 5 and 6 are spare and are filled rather than omitted: the image size is
+# what the mapper reads, so a short image is a different cartridge.
+BANKS="dmg0 dmg1 dmg2 dmg3 dmboot"
+
+python3 tools/dmphase.py rom/dodgem.bin build/dm_org.lst > build/phase.log
+python3 tools/dmbanks.py build/dm_org.lst build/dm_org.asm build
+
+# THE TAIL IS ASSEMBLED FIRST. mktail.py turns the addresses its routines land
+# at into build/tail.inc, which every bank includes -- so a bank cannot be
+# assembled against a transport that has not been placed yet.
+assemble dmtail
+p2bin build/dmtail.p build/dmtail.bin -r '$1800-$1FFF' -l 255 -q
+
+for b in $BANKS; do
+    # The four game banks are GENERATED into build/; the boot bank is written
+    # by hand and lives in src/. AS resolves INCLUDE against its own cwd, which
+    # is why assemble() takes the directory rather than guessing.
+    d=build; [ -f "src/$b.asm" ] && d=src
+    assemble "$b" "$d"
+    python3 tools/checkbanks.py "build/$b.lst" $((0x1800)) "$b"
+    p2bin "build/$b.p" "build/$b.bin" -r '$1000-$17FF' -l 255 -q
+    rm -f "build/$b.p"
+done
+
+# Two spare banks, filled with $FF. NOT with $00: $00 is BRK, and a bank that
+# is all BRK is a bank that runs if it is ever entered by accident. $FF is ISC
+# abs,X, which is no better as code but is what p2bin's own filler is
+# everywhere else in this image, so a stray bank looks like every other gap.
+python3 - <<'EOF'
+open("build/dmspare.bin", "wb").write(b"\xFF" * 2048)
+EOF
+
+cat build/dmg0.bin build/dmg1.bin build/dmg2.bin build/dmg3.bin \
+    build/dmboot.bin build/dmspare.bin build/dmspare.bin \
+    build/dmtail.bin > build/dodgem.bin
+rm -f build/dmtail.p
+
+stampclaim build/dodgem.bin
+python3 tools/checkrom_filter.py "$VCS/tools/checkrom.py" build/dodgem.bin \
+    "build/dmg0.lst" "build/dmg1.lst" "build/dmg2.lst" "build/dmg3.lst" \
+    "build/dmboot.lst" "build/dmspare.lst" "build/dmspare.lst" \
+    "build/dmtail.lst@0x1800"
+exit 0
