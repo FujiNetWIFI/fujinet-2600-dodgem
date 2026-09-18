@@ -21,8 +21,9 @@ VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 900
+FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames det ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs det ladder clean
 
 all: dodgem
 
@@ -122,7 +123,19 @@ det: dodgem
 frames: dodgem
 	test/run_frames.sh $(FRAME_COUNT)
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames det
+# ---------------------------------------------------------------- M3
+# The game reads no console port: every SWCHA/SWCHB/INPT4/INPT5 read comes
+# from the shim, plus one deliberate live read of the B/W switch, which is a
+# local preference and not on the wire.
+#
+# It DRIVES the game -- SELECT twice into the two-player variation, RESET to
+# start, both sticks moving -- because sixteen of the twenty-four sites sit
+# behind `BIT $94 / BVC` and never execute in attract. The state reached is
+# asserted; a gate that passes in attract passes on nothing.
+inputs: dodgem
+	test/run_inputs.sh $(FRAME_COUNT_IN)
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs det
 
 defs:
 	./build.sh defs

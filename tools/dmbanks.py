@@ -55,11 +55,6 @@ ENTRIES = {
            (0xF0CA, "the cold path")],
 }
 
-# Banks that read the synthetic controller, and therefore have to fill it at
-# the head of their band. The shadows are band-local and do not survive the
-# kernel; see src/dmmix.inc.
-NEEDS_MIX = {"G0", "G1", "G3"}
-
 # The bank-local switch stubs the seam patches jump to. A branch cannot reach
 # another bank, but it can reach one of these.
 STUBS = {
@@ -366,7 +361,12 @@ def main():
         # carries its own copy -- Dragster's PORTING.md 4, where StageRace
         # jumped into the middle of PositionSprites and 72 bytes had to live
         # in both banks. Fifty bytes here, against hundreds spare.
-        if bank in NEEDS_MIX:
+        # Included only where it is CALLED, the same test dmpoke.inc gets.
+        # A hand-written list had G1 carrying a copy that nothing reached: it
+        # is entered from G0 inside the vblank band, after the fill has already
+        # run. make inputs is what showed that -- four reads from G0's copy,
+        # four from G3's, none from G1's.
+        if any("DMMIX" in l for l in out):
             out.append("")
             out.append('        INCLUDE "dmmix.inc"')
         if any("DMPOKE" in l for l in out):
