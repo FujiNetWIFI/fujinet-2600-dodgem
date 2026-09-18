@@ -186,6 +186,61 @@ def code_addresses(listing):
     return out
 
 
+X_WRITERS = {0xA2, 0xA6, 0xB6, 0xAE, 0xBE, 0xAA, 0xBA, 0xE8, 0xCA}
+Y_WRITERS = {0xA0, 0xA4, 0xB4, 0xAC, 0xBC, 0xA8, 0xC8, 0x88}
+
+
+def writes_reg(rom, base, code, entry, reg, _memo={}):
+    """Does anything reachable from `entry` write X (or Y)?
+
+    A backward walk for an index bound has to stop at a JSR, because the
+    instruction before a call is not the instruction that ran before it. But
+    an index very often SURVIVES a call -- Dodge 'Em loads X from the game
+    variation, calls a sprite-pointer helper, and then indexes a table with
+    the X it still holds. Refusing to look past the call would mean
+    hand-listing those sites, and a hand list of an idiom is a hand list that
+    rots.
+
+    So the callee is examined instead. If nothing it can reach writes the
+    register, the walk may step over the call; if anything does, it stops.
+    """
+    key = (entry, reg)
+    if key in _memo:
+        return _memo[key]
+    _memo[key] = True                    # assume the worst while recursing
+    writers = X_WRITERS if reg == 'X' else Y_WRITERS
+    hit, seen, work = False, set(), [entry]
+    while work and not hit:
+        pc = work.pop()
+        while True:
+            if pc in seen or pc not in code:
+                break
+            seen.add(pc)
+            op = rom[pc - base]
+            n = LEN[op] or 1
+            if op in writers:
+                hit = True
+                break
+            if op in BRANCH:
+                work.append(pc + 2 + ((rom[pc - base + 1] ^ 0x80) - 0x80))
+                pc += 2
+                continue
+            tgt = (rom[pc - base + 1] | (rom[pc - base + 2] << 8)) if n == 3 else None
+            if op == 0x20 and tgt is not None:
+                if writes_reg(rom, base, code, tgt, reg, _memo):
+                    hit = True
+                    break
+            elif op == 0x4C:
+                if tgt is not None:
+                    work.append(tgt)
+                break
+            elif op in (0x60, 0x40, 0x6C, 0x00):
+                break
+            pc += n
+    _memo[key] = hit
+    return hit
+
+
 def bound_index(rom, base, code, site, reg):
     """How far past `base` can this access reach?
 
@@ -198,13 +253,33 @@ def bound_index(rom, base, code, site, reg):
     which case the caller must treat the base as unbounded and say so.
     """
     want = LDXI if reg == 'X' else LDYI
+    xfer = 0xAA if reg == 'X' else 0xA8          # TAX / TAY
     for a in range(site - 1, max(site - 96, min(code)) - 1, -1):
         if a not in code:
             continue
         op = rom[a - base]
         if op == want:
             return rom[a - base + 1]
-        if op in (0x20, 0x4C, 0x60):     # JSR/JMP/RTS: a different stream
+        if op == xfer:
+            # The index arrived through the accumulator, so keep walking and
+            # bound A instead. `LDA $82 / AND #$03 / TAX / LDA table,X` is the
+            # game's usual way of indexing a four-entry variation table, and
+            # hand-listing every one of those would be listing an idiom.
+            want, xfer = None, None
+            continue
+        if want is None:
+            if op == 0x29:               # AND #n bounds A to n
+                return rom[a - base + 1]
+            if op == 0xA9:               # LDA #n
+                return rom[a - base + 1]
+            if op in (0xA5, 0xAD, 0xB5, 0xBD, 0xB9):
+                break                    # A reloaded from memory: unbounded
+        if op == 0x20:                   # JSR: step over it only if safe
+            tgt = rom[a - base + 1] | (rom[a - base + 2] << 8)
+            if writes_reg(rom, base, code, tgt, reg):
+                break
+            continue
+        if op in (0x4C, 0x60):           # JMP/RTS: a different stream
             break
     return None
 
@@ -281,21 +356,19 @@ def walk(rom, base, code, entry, stops):
     return seen
 
 
-def main():
-    rom_path = sys.argv[1] if len(sys.argv) > 1 else 'rom/dodgem.bin'
-    listing = sys.argv[2] if len(sys.argv) > 2 else 'build/dm_org.lst'
-    rom = open(rom_path, 'rb').read()
-    base = 0x10000 - len(rom)
-    code = code_addresses(listing)
+def census(rom, base, code):
+    """reads, writes, how, unbounded -- the measurement, without the report.
 
-    phase_of = {}
-    stops = BOUNDS
-    for name, entry in PHASES:
-        for a in walk(rom, base, code, entry, stops):
-            phase_of.setdefault(a, set()).add(name)
-
+    Factored out so check_zp.py asks the same question the same way. Two
+    copies of a liveness analysis drift, and the second one is always the
+    optimistic one.
+    """
     reads, writes, how = {}, {}, {}
     unbounded = []
+    phase_of = {}
+    for name, entry in PHASES:
+        for a in walk(rom, base, code, entry, BOUNDS):
+            phase_of.setdefault(a, set()).add(name)
     for a in sorted(code):
         op = rom[a - base]
         if LEN[op] != 2:
@@ -309,6 +382,10 @@ def main():
                 continue                    # the cold sweep; reported apart
             reg = 'X' if op in XMODE else 'Y'
             n = bound_index(rom, base, code, a, reg)
+            if n is not None and a in HAND and HAND[a][0] != n:
+                sys.exit("zpmap: $%04X -- HAND says %d, the walk says %d. One "
+                         "of them is wrong and it matters."
+                         % (a, HAND[a][0], n))
             if n is None:
                 if a in HAND:
                     n = HAND[a][0]
@@ -330,6 +407,17 @@ def main():
                 reads.setdefault(c, set()).update(ph)
             if is_w:
                 writes.setdefault(c, set()).update(ph)
+
+    return reads, writes, how, unbounded
+
+
+def main():
+    rom_path = sys.argv[1] if len(sys.argv) > 1 else 'rom/dodgem.bin'
+    listing = sys.argv[2] if len(sys.argv) > 2 else 'build/dm_org.lst'
+    rom = open(rom_path, 'rb').read()
+    base = 0x10000 - len(rom)
+    code = code_addresses(listing)
+    reads, writes, how, unbounded = census(rom, base, code)
 
     used = set(reads) | set(writes)
     free = [c for c in range(RAM_LO, RAM_HI + 1) if c not in used]
@@ -411,22 +499,13 @@ def main():
     print("$%02X-$FF are spoken for." % floor)
     print()
 
-    NEED = 16
-    usable = [c for c in persistent if c < floor]
-    print("VERDICT: the netcode needs %d bytes of PERSISTENT state "
-          "(dmdefs.inc)." % NEED)
-    print("         %d are available below the stack floor%s."
-          % (len(usable),
-             ": " + " ".join("$%02X" % c for c in usable) if usable else ""))
-    if len(usable) >= NEED:
-        print("         PASS -- squeeze in-console; no cartridge-side work.")
-        return 0
-    print("         FAIL -- short by %d. Escalate: move the six playfield"
-          % (NEED - len(usable)))
-    print("         streams $C3-$F8 (54 bytes) into a cartridge text plane,")
-    print("         which needs one new blit transform in the firmware. See")
-    print("         PORTING.md; this is the decision that gate exists to make.")
-    return 1
+    print("This is the MEASUREMENT, and it stops here: 1 cell against a")
+    print("netcode that needs about sixteen. What the port does about that --")
+    print("which sixteen bytes of the GAME are evicted into a cartridge text")
+    print("plane to make room -- is check_zp.py's business, because the answer")
+    print("is a claim about dmdefs.inc and not a fact about the cartridge.")
+    print("See PORTING.md 5.")
+    return 0
 
 
 if __name__ == '__main__':

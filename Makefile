@@ -20,7 +20,7 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 
-.PHONY: all disasm verify-org zp ladder clean
+.PHONY: all disasm verify-org defs zp phase ladder clean
 
 all: verify-org
 
@@ -56,7 +56,18 @@ verify-org:
 zp: verify-org
 	./build.sh zp
 
-ladder: verify-org zp
+# ---------------------------------------------------------------- M0d
+# The bank map, COMPUTED. The tempting measurement is which address boundary
+# the fewest branches cross; this is the one that matters, because a bank
+# switch is a jump and everything between two switches -- every subroutine
+# called, every table read -- has to be in one bank.
+phase: verify-org
+	./build.sh phase
+
+ladder: defs verify-org zp phase
+
+defs:
+	./build.sh defs
 
 clean:
 	rm -f build/*.p build/*.lst build/*.bin build/*.inc build/*.asm

@@ -165,6 +165,15 @@ if [ "${1:-}" = "zp" ]; then
     # verify-org's output, so make that first if it is not there.
     [ -f build/dm_org.lst ] || "$0" verify-org
     python3 tools/zpmap.py rom/dodgem.bin build/dm_org.lst
+    echo
+    python3 tools/check_zp.py rom/dodgem.bin build/dm_org.lst src/dmdefs.inc
+    exit 0
+fi
+
+# ---------------- the bank map, computed ----------------
+if [ "${1:-}" = "phase" ]; then
+    [ -f build/dm_org.lst ] || "$0" verify-org
+    ( cd tools && python3 dmphase.py ../rom/dodgem.bin ../build/dm_org.lst )
     exit 0
 fi
 
