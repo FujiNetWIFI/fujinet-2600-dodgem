@@ -126,6 +126,60 @@ POINTERS = [
 NOT_A_POINTER = [(0xF052, "A9 FF", "seeds the dot bitmap, not a pointer high byte")]
 
 # ---------------------------------------------------------------------------
+# ...AND THE LOW BYTES, AND THE COMPARISONS. Rewriting only the high bytes is
+# a trap that builds, runs, and draws a plausible screen.
+#
+# `LDA #$94 / STA $8A` is the other half of every pointer, and `#$94` is a
+# literal that says nothing about where the table is. With only the high byte
+# patched, the digit pointer in bank G0 came out as $1494 while LFE94 was
+# actually at $143A -- off by $5A, reading glyphs out of the middle of the
+# track tables. make det caught it; nothing static could, because both halves
+# are immediates and neither is wrong on its own.
+#
+# The four CMP sites are the same mistake in a third disguise. `CMP #$CA` is
+# the digit-table WRAP CHECK and $CA is LFE94+54, the end of the ten 6-byte
+# glyphs -- a table-relative address written as a constant. Rewritten with the
+# table, it keeps meaning what it meant.
+POINTER_LOWS = [
+    (0xF074, "A9 6C", "lda     #(LFE6C)&$FF", "car sprite -> $A0"),
+    (0xF515, "A9 64", "lda     #(LFE64)&$FF", "car sprite -> $BA"),
+    (0xF51E, "A9 64", "lda     #(LFE64)&$FF", "car sprite -> $A0"),
+    (0xF527, "A9 64", "lda     #(LFE64)&$FF", "car sprite -> $A7"),
+    (0xF68A, "A9 6C", "lda     #(LFE6C)&$FF", "car sprite -> $A0"),
+    (0xF7CD, "A9 6C", "lda     #(LFE6C)&$FF", "car sprite -> $A0"),
+    (0xFB5D, "A9 6C", "lda     #(LFE6C)&$FF", "car sprite -> $A7"),
+    (0xFC41, "A9 94", "lda     #(LFE94)&$FF", "all six score digits at once"),
+    (0xFC7B, "A9 94", "lda     #(LFE94)&$FF", "digit wrap -> $8E"),
+    (0xFC85, "A9 94", "lda     #(LFE94)&$FF", "digit wrap -> $90"),
+    (0xFCBD, "A9 94", "lda     #(LFE94)&$FF", "digit wrap -> $88"),
+    (0xFCC7, "A9 94", "lda     #(LFE94)&$FF", "digit wrap -> $8A"),
+    (0xFC73, "C9 CA", "cmp     #(LFE94+54)&$FF", "digit table end, $8E"),
+    (0xFC81, "C9 CA", "cmp     #(LFE94+54)&$FF", "digit table end, $90"),
+    (0xFCB5, "C9 CA", "cmp     #(LFE94+54)&$FF", "digit table end, $88"),
+    (0xFCC3, "C9 CA", "cmp     #(LFE94+54)&$FF", "digit table end, $8A"),
+
+    # A pointer built by 16-BIT ARITHMETIC rather than loaded whole:
+    #
+    #     $F463  LDA #$6C        ; LFE6C, low
+    #     $F466  ADC #$08        ; + 8
+    #     $F46C  LDA #$00
+    #     $F46E  ADC #$FE        ; LFE6C, high, taking the carry
+    #
+    # Both halves of LFE6C are here and neither is next to its STA, which is
+    # why the first sweep for pointer constants missed them: it looked for
+    # `LDA #imm` immediately followed by `STA zp`. The +8 is untouched -- it is
+    # an offset into the table, not an address -- and rewriting the base keeps
+    # the carry behaviour exactly, because the high byte is still added with
+    # whatever the low add produced.
+    #
+    # make det found this: the crash animation set $A7/$A8 to G3's PACKED copy
+    # of the table instead of the pinned one, and the two builds diverged 134
+    # frames in, when the first car crashed.
+    (0xF463, "A9 6C", "lda     #(LFE6C)&$FF", "crash animation, low half"),
+    (0xF46E, "69 FE", "adc     #(LFE6C)>>8",  "crash animation, high half"),
+]
+
+# ---------------------------------------------------------------------------
 # M0c: the evicted blocks.
 #
 # $AC-$B4 (the per-row dot bitmap) and $BC-$C2 (player B's saved state) move
@@ -206,5 +260,5 @@ SEAMS = [
     (0xFB23, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
 ]
 
-ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS), ("EVICTED", EVICTED),
-       ("SEAMS", SEAMS)]
+ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS),
+       ("POINTER_LOWS", POINTER_LOWS), ("EVICTED", EVICTED), ("SEAMS", SEAMS)]

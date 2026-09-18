@@ -314,6 +314,12 @@ cat build/dmg0.bin build/dmg1.bin build/dmg2.bin build/dmg3.bin \
     build/dmtail.bin > build/dodgem.bin
 rm -f build/dmtail.p
 
+# Every label in the pinned span is at one address in every bank. A pointer
+# built in one bank and followed in another depends on it, and the failure is
+# silent until the event that follows the pointer happens.
+python3 tools/check_pins.py $((0xFE2E)) $((0xFED7)) \
+    build/dmg0.lst build/dmg1.lst build/dmg2.lst build/dmg3.lst
+
 stampclaim build/dodgem.bin
 python3 tools/checkrom_filter.py "$VCS/tools/checkrom.py" build/dodgem.bin \
     "build/dmg0.lst" "build/dmg1.lst" "build/dmg2.lst" "build/dmg3.lst" \

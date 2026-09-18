@@ -79,6 +79,35 @@ FALLTHROUGH = {
 
 WINDOW = 0x1000
 BANK_SIZE = 0x800
+
+# PINNED TABLES, and the bug that makes them necessary.
+#
+# A table reached through a ZERO-PAGE POINTER must be at the same address in
+# every bank that touches it, because the pointer crosses the bank boundary
+# and the address does not mean anything on the other side.
+#
+# Dodge 'Em's digit pointers are BUILT in G0 (LFC41, LFC71) and DEREFERENCED in
+# G2, the display kernel. Packed, LFE94 landed at $143A in G0 and $12B5 in G2 --
+# so the kernel followed a pointer into whatever G2 happened to have at $143A.
+# The picture still drew; it drew the wrong bytes.
+#
+# Absolute references do not have this problem: they are resolved per bank by
+# the assembler and never leave it. Only what travels through RAM does.
+#
+# So the span containing every pointer target is placed at a FIXED address in
+# every bank that carries any of it, identically, and the packed regions have
+# to fit below it.
+# Computed, not chosen: the span is the union of every region, in any bank,
+# that contains a pointer target, and it is placed hard against the top of the
+# bank so the packed code has the rest.
+def pin_span():
+    lo = hi = None
+    for b in BANK_REGIONS:
+        for l, h in BANK_REGIONS[b]:
+            if any(l <= t <= h for t in POINTER_TARGETS):
+                lo = l if lo is None else min(lo, l)
+                hi = h if hi is None else max(hi, h)
+    return lo, hi
 DMPOKE_SIZE = 0x30      # src/dmpoke.inc, measured; the build asserts it below
 
 # AS lists at most nine emitted bytes and then puts ONE space before the
@@ -143,6 +172,25 @@ def patch_table():
     return out
 
 
+def assert_line_boundaries(addrs, regions, what):
+    """EVERY REGION BOUNDARY MUST FALL ON A SOURCE-LINE BOUNDARY.
+
+    A region that starts nine bytes into a DB does not start where its ORG
+    says: the emitter can only place whole source lines, so it skips that line
+    entirely and everything after it sits at the wrong address. The symptom is
+    a table that is fine in three banks and adrift in the fourth.
+    """
+    starts = {a for a, _ in addrs.values()}
+    ends = {a + nb for a, nb in addrs.values()}
+    bad = []
+    for lo, hi in regions:
+        if lo not in starts:
+            bad.append("$%04X (%s start) is inside a source line" % (lo, what))
+        if hi + 1 not in ends and hi != 0xFFFF:
+            bad.append("$%04X (%s end) is inside a source line" % (hi, what))
+    return bad
+
+
 def main():
     lst, asm, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
     addrs = line_addresses(lst)
@@ -166,6 +214,20 @@ def main():
         out.append('        INCLUDE "dmdefs.inc"')
         out.append("")
         # Synthesise the pointer-target labels this bank can define.
+        pin_lo, pin_hi = pin_span()
+        PIN_BASE = WINDOW + BANK_SIZE - (pin_hi - pin_lo + 1)
+
+        # The runs this bank EFFECTIVELY carries: its packed ones plus, if it
+        # touches the pinned span at all, the whole of that span. The anchors
+        # below must be computed against these and not against the raw region
+        # list -- G1's raw run began at $FE64, nine bytes into the DB at
+        # $FE5B, so the nearest-preceding-label search could not see LFE5B and
+        # anchored LFE6C on a code label instead. It assembled, and put a
+        # pointer to the middle of the dot engine in $A7.
+        wants_pin = pin_lo is not None and any(
+            r[0] <= pin_hi and r[1] >= pin_lo for r in runs)
+        eff_runs = list(runs) + ([(pin_lo, pin_hi)] if wants_pin else [])
+
         real_labels = set()
         for n in sorted(addrs):
             lab = label_of(src[n - 1])
@@ -174,14 +236,14 @@ def main():
 
         anchors = []
         for t in POINTER_TARGETS:
-            if not any(lo <= t <= hi for lo, hi in runs):
+            if not any(lo <= t <= hi for lo, hi in eff_runs):
                 continue
             if ("L%04X" % t) in real_labels:
                 continue            # DiStella already names it
             best = None
             for n in sorted(addrs):
                 a, _ = addrs[n]
-                if a <= t and any(lo <= a <= hi for lo, hi in runs):
+                if a <= t and any(lo <= a <= hi for lo, hi in eff_runs):
                     lab = label_of(src[n - 1])
                     if lab:
                         best = (lab, t - a)
@@ -199,6 +261,9 @@ def main():
             out.append("")
 
         # ---- the entry dispatcher, at $1000 ----
+        # Which of this bank's runs are pinned: any that overlaps a pointer
+        # target's containing table.
+
         cursor = WINDOW
         ents = ENTRIES[bank]
         out.append("        ORG     $%04X" % WINDOW)
@@ -247,7 +312,23 @@ def main():
         # So the sizes are not computed here at all. The assembler packs them,
         # which it is for, and tools/checkbanks.py reads the real figure off
         # the listing afterwards.
-        for lo, hi in runs:
+        # A bank that carries ANY of the pinned span carries ALL of it, at the
+        # same address. Two reasons, and the second is the one that bit:
+        #
+        #   * identical addresses are the entire point -- a pointer built in
+        #     one bank is dereferenced in another;
+        #   * a per-bank sub-span does not start where its ORG says it does.
+        #     G1's run began at $FE64, which is 9 bytes INTO the DB at $FE5B,
+        #     so the emitter skipped that whole line and LFE94 came out seven
+        #     bytes adrift of the other three banks.
+        #
+        # Tennis's mkbanks.py has a rule for the second one -- every region
+        # boundary must fall on a source-line boundary -- and it is asserted
+        # below rather than merely honoured here.
+        pinned = [(pin_lo, pin_hi)] if wants_pin else []
+        packed = [r for r in runs
+                  if not (wants_pin and r[0] <= pin_hi and r[1] >= pin_lo)]
+        for lo, hi in packed:
             out.append("; ---- stock $%04X-$%04X ----" % (lo, hi))
             for n in sorted(addrs):
                 a, nb = addrs[n]
@@ -287,6 +368,44 @@ def main():
             out.append("")
             out.append('        INCLUDE "dmpoke.inc"')
             cursor += DMPOKE_SIZE
+
+        # ---- the pinned tables, at the same address in every bank ----
+        #
+        # LAST. This ORGs to the top of the bank, so anything emitted after it
+        # continues past $1800 -- which p2bin truncates without a word, and
+        # checkbanks.py is what says so. The shared leaf routines above have to
+        # be placed before it, in the packed region.
+        for lo, hi in pinned:
+            at = PIN_BASE + (lo - pin_lo)
+            out.append("")
+            out.append("; ---- stock $%04X-$%04X, PINNED at $%04X ----"
+                       % (lo, hi, at))
+            out.append("; Reached through a zero-page pointer that crosses a")
+            out.append("; bank, so this must be at one address everywhere.")
+            out.append("        ORG     $%04X" % at)
+            for n in sorted(addrs):
+                a, nb = addrs[n]
+                if not lo <= a <= hi:
+                    continue
+                line = src[n - 1]
+                if a in patched:
+                    new, why = patched[a]
+                    used.add(a)
+                    lab = label_of(line)
+                    head, _, tail = new.partition("\n")
+                    line = "%-7s %-24s; PATCHED: %s" % (lab or "", head, why)
+                    if tail:
+                        line = line + "\n" + tail
+                out.append(line)
+            end = PIN_BASE + (hi - pin_lo)
+            if end >= WINDOW + BANK_SIZE:
+                sys.exit("dmbanks: bank %s pinned span runs past the bank at "
+                         "$%04X" % (bank, end))
+            if at < cursor:
+                sys.exit("dmbanks: bank %s packs to $%04X, over the pinned "
+                         "span at $%04X -- PIN_BASE must rise or the bank must "
+                         "shrink" % (bank, cursor, at))
+
 
         # A stock-size estimate only: what this bank would be if no patch
         # changed length. checkbanks.py has the real number.
@@ -350,6 +469,12 @@ def main():
         for b, hi, nxt, to in seams:
             print("    %s runs off $%04X into $%04X (%s)"
                   % (b, hi, nxt, "/".join(to)))
+
+    bad = assert_line_boundaries(addrs, [pin_span()], "the pinned span")
+    if bad:
+        for b in bad:
+            print("dmbanks: " + b)
+        sys.exit("dmbanks: FAIL -- a region boundary is not a line boundary")
 
     missing = sorted(set(patched) - used)
     if missing:

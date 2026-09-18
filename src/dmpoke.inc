@@ -38,9 +38,7 @@ DMPOKED:
         sta     FNRSEL+FH_BDL
         lda     #DMDOTSO>>8
         sta     FNRSEL+FH_BDH
-        lda     #FB_POKE
-        sta     FNRSEL+FH_BGO   ; fire; the transform rides in the store's data
-        rts
+        jmp     DMFIRE
 
 DMPOKEB:
         sta     FNRSEL+FH_BSL
@@ -50,8 +48,32 @@ DMPOKEB:
         sta     FNRSEL+FH_BDL
         lda     #DMSAVBO>>8
         sta     FNRSEL+FH_BDH
+        ; fall through
+
+; ---------------------------------------------------------------------------
+; DMFIRE -- fire the blit and wait for it to LAND.
+;
+; The generation counter is snapshotted BEFORE the store and waited on after,
+; which is the only ordering that works. The first version of this read FNBGEN
+; and then spun until it differed from itself; nothing was ever going to change
+; it, and the console hung on the first poke with every RAM cell still zero --
+; which reads as a ROM that never started rather than a routine that never
+; returned.
+;
+; Correct on hardware, where core0 runs the blit some microseconds later, and
+; free in emulation, where it lands inside the store and the compare falls
+; through on the first pass. Written that way round on purpose: fujitcp.h's
+; note about ACKSEQ is the same trap, and a client that polls only because the
+; emulator lets it get away with not polling fails on the cartridge.
+DMFIRE:
+        lda     FNBGEN
+        sta     DMTMP
         lda     #FB_POKE
-        sta     FNRSEL+FH_BGO
+        sta     FNRSEL+FH_BGO   ; fire; the transform rides in the store's data
+DMFIRE1:
+        lda     FNBGEN
+        cmp     DMTMP
+        beq     DMFIRE1
         rts
 
 ; The low byte of the destination is added to X without handling a carry, and
@@ -65,19 +87,3 @@ DMPOKEB:
         IF      (DMSAVBO&$FF)+6 > $FF
         ERROR   "DMSAVB is placed so that the save-block index carries"
         ENDIF
-
-; ---------------------------------------------------------------------------
-; DMBWAIT -- spin until the last blit has landed.
-;
-; Called before a blit, not after. In emulation FNBGEN has already moved by the
-; time this reads it and the loop falls straight through, which is exactly the
-; fidelity trap fujitcp.h warns about for ACKSEQ: a client that forgets to poll
-; passes in emulation and fails on hardware. So the poll is written to be
-; correct on hardware and free in emulation, and never the other way round.
-; ---------------------------------------------------------------------------
-DMBWAIT:
-        lda     FNBGEN
-DMBW1:
-        cmp     FNBGEN
-        beq     DMBW1
-        rts
