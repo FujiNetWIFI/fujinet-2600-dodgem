@@ -62,6 +62,14 @@
 ; ===========================================================================
 
 ; ---------------- persistent: the evicted $AC-$B4 and $BC-$C2 ----------------
+;
+; THE TWO WINDOWS ARE CONTIGUOUS, and that is a requirement rather than a
+; tidiness: DMREMOTE reaches the peer's window with `lda DMRIN0,x`, so slot 2
+; had better be DMRIN0+2. The first arrangement put DMRIN2 at $BC, across the
+; gap between the two evicted blocks, and index 2 read player A's saved state
+; instead. It assembled and it would have desynced on the first tick the peer
+; ran two ahead. The assertions at the foot of this file are there so the next
+; rearrangement cannot repeat it.
 DMENT   EQU     $AC             ; entry mode, role, phase and the flags below
 DMTICK  EQU     $AD             ; sim tick, low 8 bits
 DMSEQ   EQU     $AE             ; the sequence we are waiting for
@@ -76,40 +84,37 @@ DMCRCV  EQU     $B1             ; the sim checksum, SAMPLED AT A TICK BOUNDARY
                                 ;   design (Combat 4.5)
 DMRWAT  EQU     $B2             ; highest remote tick received
 
-; The remote input window, newest first. THREE, not one: a lockstep transport
-; that sends exactly one tick per packet is betting it never misses a beat,
-; and it will (Combat 4.24). Three ticks ride in every record.
-DMRIN0  EQU     $B3
-DMRIN1  EQU     $B4
-DMRIN2  EQU     $BC
+; $B3 and $B4 are deliberately UNSPENT. A port whose zero page fits exactly has
+; no room for the cell the next bug needs, and in this family there is always
+; one more cell. Do not allocate these to make something fit; work out why it
+; did not fit.
+DMFREE1 EQU     $B3
+DMFREE2 EQU     $B4
 
-; The local input ring. d = 2, so t, t-1 and t-2 must be live. DMLOC0 is also
-; the wire byte for the tick being captured -- it is the same quantity, and a
-; separate copy would be a second place for the tick and its input to disagree
-; (Combat 4.14: if a quantity and its label are sampled at different moments,
-; the relationship between them is a fact about the local machine).
-DMLOC0  EQU     $BD
-DMLOC1  EQU     $BE
-DMLOC2  EQU     $BF
+; The peer's input window, newest first: DMRIN0 is tick DMRWAT, DMRIN1 is
+; DMRWAT-1, DMRIN2 is DMRWAT-2. THREE, not one: a lockstep transport that sends
+; exactly one tick per packet is betting it never misses a beat, and it will
+; (Combat 4.24).
+DMRIN0  EQU     $BC
+DMRIN1  EQU     $BD
+DMRIN2  EQU     $BE
 
-DMADV   EQU     $C0             ; nonzero: the sim advances this frame
+; The local input ring, the same shape. d = 2, so the live slots are t, t-1 and
+; t-2 and nothing older is ever wanted -- a three-byte shift rather than a ring
+; indexed by tick, because a shift has no modulo to get off by one. DMLOC0 is
+; also the wire byte for the tick being captured: it is the same quantity, and
+; a separate copy would be a second place for the tick and its input to
+; disagree (Combat 4.14).
+DMLOC0  EQU     $BF
+DMLOC1  EQU     $C0
+DMLOC2  EQU     $C1
 
-; Scratch, dead between routines -- and it has to be allocated HERE, out of the
-; persistent pool, which is worth explaining because it looks like waste.
-;
-; Scratch wants a band-local cell. There are exactly four cells the game leaves
-; untouched across both bands -- $80 $87 $A9 $AA -- and all four are spent on
-; the synthetic controller, which every one of the 24 patch sites reads. There
-; is no fifth. $99 and $AB are free in overscan and touched in vblank, and the
-; net machine runs in the VBLANK band, so neither will do.
-DMTMP   EQU     $C1
+DMADV   EQU     $C2             ; nonzero: the sim advances this frame
 
-; $C2 and $F9 are deliberately UNSPENT. A port whose zero page fits exactly
-; has no room for the cell the next bug needs, and in this family there is
-; always one more cell. Do not allocate these to make something fit; work out
-; why it did not fit.
-DMFREE1 EQU     $C2
-DMFREE2 EQU     $F9
+; Scratch, dead between routines -- allocated out of the one cell below the
+; stack that the game never writes, because the four cells free across both
+; bands are all spent on the synthetic controller and there is no fifth.
+DMTMP   EQU     $F9
 
 ; ---------------- the union: the session's transport cells ----------------
 ;
@@ -280,3 +285,21 @@ DMMODE  EQU     $C0             ; $94 bits 7,6: both players active -- they
                                 ;   alternate who dodges, and whoever is not
                                 ;   dodging drives the chase car
 DMLEVEL EQU     $B8             ; $96 & $F8 that goes with it
+
+; ---------------- assertions ----------------
+;
+; DMREMOTE indexes the peer's window with `lda DMRIN0,x` and the mixer shifts
+; the local one, so both must be three contiguous cells. Stated here, at the
+; allocation, rather than trusted to whoever next rearranges it.
+        IF      DMRIN1 <> DMRIN0+1
+        ERROR   "DMRIN1 is not DMRIN0+1"
+        ENDIF
+        IF      DMRIN2 <> DMRIN0+2
+        ERROR   "DMRIN2 is not DMRIN0+2"
+        ENDIF
+        IF      DMLOC1 <> DMLOC0+1
+        ERROR   "DMLOC1 is not DMLOC0+1"
+        ENDIF
+        IF      DMLOC2 <> DMLOC0+2
+        ERROR   "DMLOC2 is not DMLOC0+2"
+        ENDIF

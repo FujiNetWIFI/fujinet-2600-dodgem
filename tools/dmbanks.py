@@ -389,9 +389,21 @@ def main():
             out.append("")
             out.append('        INCLUDE "dmgate.inc"')
 
-        if any("DMMIX" in l for l in out):
+        # The clock, the checksum and the tick capture belong ONLY to the bank
+        # that runs DMMIXV -- the vblank call. DMMIXO derives and nothing else,
+        # so the bank that holds it needs the derivation and none of the rest.
+        #
+        # That is not tidiness: carrying them in both banks pushed G3's packed
+        # code into the pinned span at the top, which p2bin reports as an
+        # overlap and then resolves by letting the later write win.
+        if any("DMMIXV" in l for l in out):
             out.append("")
             out.append('        INCLUDE "dmphi.inc"')
+            out.append('        INCLUDE "dmcrc.inc"')
+            out.append('        INCLUDE "dmcap.inc"')
+            out.append('        INCLUDE "dmmixv.inc"')
+        if any("DMMIX" in l for l in out):
+            out.append("")
             out.append('        INCLUDE "dmmix.inc"')
         if any("DMPOKE" in l for l in out):
             out.append("")
