@@ -230,3 +230,154 @@ Tennis §2.5 is the nearest precedent and it is a mild one: its out-of-bounds
 has to run under `rig-play` rather than `det`, because the sprite pointers
 advance with the score and a run where nobody scores never reaches the table
 entries that matter.
+
+---
+
+## 5. The escalation, and what it actually needed
+
+`make zp` failed by 15 cells, so the escalation fired. Two things about it are
+worth writing down, because the obvious version of it does not work.
+
+### 5.1 There was no way to write a text plane
+
+The planes at `$1800-$1AFF` are the only cartridge memory a 2600 client can
+both write and **read back** (`lda $1800,y`), which makes them the only place a
+console out of RAM can keep a variable. But before this port, **the console
+could not put a byte there.** The write paths were `FN_HOT_TROW`/`TCHR`/`TEND`,
+which render *glyphs*, and the blit port, whose source is the reply window —
+server data, not console data. Neither can store a byte the console computed.
+
+The routes that avoid new firmware were all tried on paper first:
+
+- **Compose the input byte on the relay.** Refused: it makes the console
+  depend on the network for *its own stick*, and Combat §4.13's rule is that a
+  cartridge with no server is still a Dodge 'Em cartridge.
+- **Round-trip the state through the relay** and `FN_BLIT_RAW` it back out of
+  the reply window into a plane. This works, and for state that changes a few
+  times a minute it is the right answer with no firmware change at all. It does
+  not work for the dot bitmap, which changes whenever a dot is eaten.
+- **Keep state in the path buffers**, read back with `FN_BLIT_PATH`. The
+  buffers are write-only and the blit renders glyphs, so recovering a byte
+  needs the font to be injective over 0-255. It is not; `fuji_mailbox.h`
+  records three glyph pairs that were bit-identical and had to be redrawn.
+- **Store bytes as hex digit pairs** and decode the plane bits back. The
+  sixteen hex glyphs *are* distinguishable, so this one works — and costs a
+  blit to write and five scanlines of bit-decoding to read, per byte, per
+  frame. Fine for a cold value; impossible for a tick.
+
+So one new transform was added to the cartridge firmware:
+
+```c
+#define FN_BLIT_POKE     14       /* plane[dst] = the low byte of src        */
+```
+
+It composes nothing, which is the point. It is bounded to the planes rather
+than to the window — a client that could reach `$1B00` or `$1F00` would corrupt
+the mailbox it is talking through, and the symptom would be a failed
+transaction rather than a wrong picture, so `test_render.c` checks the bound
+rather than assuming it. Both failure modes were confirmed to fail the test
+before the implementation was restored.
+
+### 5.2 Which sixteen bytes move, and why not the ones first proposed
+
+The first proposal was the six playfield streams `$C3-$F8`, on the grounds that
+54 bytes is generous. The census says that is the worst possible choice: the
+**kernel** reads those six streams twice per scanline pair at exact cycle
+positions, so relocating them puts a plane read in the tightest budget in the
+game for no benefit beyond headroom.
+
+What moved instead, chosen off the phase columns:
+
+| block | bytes | read in | written |
+|---|---|---|---|
+| `$AC-$B4` | 9 | **vblank only** — never by the kernel | four EOR sites, only when a dot is eaten |
+| `$BC-$C2` | 7 | **overscan only** | `LF5A0`'s swap, at a round end |
+
+Sixteen bytes, neither on the kernel path, both written at frequencies measured
+in events per second rather than per frame. With `$F9` that is 17 cells against
+a need of 12-13, which clears the *"need plus two"* margin a port should
+insist on: one that fits exactly has no room for the cell the next bug needs.
+
+**The rule:** *choose what to evict by how often it is written and who reads
+it, not by how big it is.*
+
+---
+
+## 6. Three things the ROM does that the plan did not expect
+
+### 6.1 SELECT walks TWO quantities, so the whitelist must pin both
+
+`$F162` advances `$94` bits 7,6 through `00 → 80 → C0 → 00` — the three game
+variations — and in the same breath advances `$96 & $F8` through
+`$58 → $88 → $B8 → $58`:
+
+```
+LF186: STA  $94
+       LDX  #$1E / STX $86
+       LDA  $96 / AND #$F8 / CMP #$B8
+       BNE  LF198
+       LDA  #$58 / BNE LF19B
+LF198: CLC / ADC #$30
+LF19B: STA  $96
+```
+
+So "mode 11" is `$94` bits 7,6 = `11` **and** `$96 & $F8 = $B8`, and a
+whitelist that pins only `$94` leaves two consoles agreeing about the variation
+while playing different levels. Both go in the checksum. Combat §4.21 is the
+rule — *the checksum must cover every cell that selects behaviour* — and this
+is the cell that is easy to miss because nothing about `$96` looks like a mode.
+
+### 6.2 `$9F` carries the black-and-white switch, and must stay OUT
+
+`$9F` is dual-purpose and the two purposes look nothing alike. Vblank writes a
+colour mask derived from `SWCHB` bit 3:
+
+```
+LF0F5: LDA SWCHB / LDX #$07 / LDY #$07
+       AND #$08 / BEQ LF104
+       LDX #$F7 / LDY #$03
+LF104: ... STX $9F          ; $07 in colour, $F7 in black-and-white
+```
+
+and the four turn points read it as a game-logic flag, `LDX $9F / BNE`. Both
+values are non-zero, so **behaviour is identical** — but two consoles with
+different B/W settings hold different bytes there for the whole frame.
+
+Put `$9F` in the checksum and the rig reports a desync between two machines
+that agree about everything. Video Olympics §3.15 in a new place: *a cell the
+netcode fills is not state the netcode should check* — and its converse, a cell
+the PLAYER's furniture fills is not state either. Black-and-white stays local,
+like Dragster's.
+
+### 6.3 The bank split has to be by phase, not by address
+
+§3's branch-clean split at `$F5A0`/`$FC48` is necessary and **not sufficient**,
+and this is the correction that matters most for the build. A bank switch is a
+jump, so everything that runs between two switches must be in one bank —
+including every subroutine the phase calls. Minimising *branches* across an
+address boundary says nothing about that; 18 cross-bank `JSR`s would mean 18
+switches a frame, not two.
+
+The right measurement is the transitive footprint of each frame phase, code
+plus every table it actually reads:
+
+| phase | code | data | total |
+|---|---|---|---|
+| A — VSYNC + vblank band, `$F0E4-$F243` | 1952 | 194 | **2146** |
+| B — kernel, `$F249-$F41F` | 471 | 264 | **735** |
+| C — overscan band, `$F420-$F4E9` | 1281 | 152 | **1433** |
+| D — cold, `$F0CA-$F0E3` | 315 | 128 | **443** |
+
+with **A∩B = 0 and B∩C = 0** — the kernel shares nothing with either band, the
+cleanest seam in the game. A alone is 2146, 98 bytes over a bank, and splits at
+its one natural fissure (`$F228 JSR LF859`, the whole dot engine).
+
+That gives four game banks, not two, and **four bank switches a frame**, each
+placed where the stack is empty and the cost is absorbed: `$F228` inside the
+vblank timer, `$F244` in front of `STA CXCLR / STA WSYNC`, `$F420` in front of
+the `STA WSYNC` at `$F422`, `$F4EA` in front of `$F0E8`'s.
+
+*Worth doing early in the next port:* compute each phase's transitive footprint
+and the pairwise overlaps before choosing any boundary. The address-space
+answer and the phase answer are different questions, and only the second one
+builds.

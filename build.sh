@@ -69,6 +69,21 @@ done
 
 mkdir -p build
 
+# ---------------- the equates agree with the cartridge ----------------
+#
+# FIRST, before anything is assembled. src/fujinet.inc is a hand-mirror of
+# fuji_mailbox.h, and the failure mode when it drifts is not a build error: an
+# early sibling had the control page at $1C00 where the spec says $1D00, so
+# every register write went to a page that decodes nothing, every read fell
+# through to the served window and returned $00, and the client came up, drew
+# a screen, and simply never armed the mailbox.
+checkdefs() {
+    python3 "$VCS/tools/checkdefs.py" \
+        "$VCS/firmware/include/fuji_mailbox.h" src/fujinet.inc \
+        --extra FB_POKE=FN_BLIT_POKE,FB_TCELL=FN_BLIT_TCELL,\
+FB_RAW=FN_BLIT_RAW,FB_TEXT=FN_BLIT_TEXT,FB_PATH=FN_BLIT_PATH
+}
+
 # An image carrying "FUJI" at $1F10 promises it is a FujiNet client, so the
 # mailbox stays live after it boots. Without it the cartridge treats the image
 # as an ordinary game and the mailbox goes dead the moment it starts.
@@ -138,6 +153,11 @@ fi
 # where the netcode's state lives is not a detail to settle later -- it is the
 # first question, and zpmap.py answers it with liveness rather than a touch
 # scan. See PORTING.md.
+if [ "${1:-}" = "defs" ]; then
+    checkdefs
+    exit 0
+fi
+
 if [ "${1:-}" = "zp" ]; then
     # It needs the DUMP and the ASSEMBLER'S LISTING: the dump for the opcodes,
     # the listing for the code/data split, because a linear walk through a data
