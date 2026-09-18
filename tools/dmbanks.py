@@ -172,6 +172,11 @@ def patch_table():
     return out
 
 
+def insert_table():
+    """stock address -> source line to emit BEFORE the line at that address."""
+    return {a: (src, why) for a, src, why in getattr(patchmap, "INSERTS", [])}
+
+
 def assert_line_boundaries(addrs, regions, what):
     """EVERY REGION BOUNDARY MUST FALL ON A SOURCE-LINE BOUNDARY.
 
@@ -196,6 +201,8 @@ def main():
     addrs = line_addresses(lst)
     src = open(asm).read().splitlines()
     patched = patch_table()
+    inserts = insert_table()
+    used_ins = set()
 
     # The preamble: everything before the first ORG -- CPU, the TIA equates,
     # the header comments. Every bank needs it and none of it emits a byte.
@@ -281,12 +288,6 @@ def main():
             for i, (tgt, why) in enumerate(ents[1:], 1):
                 dispatch.append("DMEN%d:  jmp     L%04X           ; entry %d: %s"
                                 % (i, tgt, i, why))
-        if bank in NEEDS_MIX:
-            # FIRST, and inside the ORG. Fill the synthetic controller before
-            # dispatching, because the vblank band reads it at $F05C -- twelve
-            # instructions in -- and the overscan band at $F4B3.
-            dispatch.insert(0, "        jsr     DMMIX")
-            cursor += 3
         out.extend(dispatch)
         cursor += sum(3 if l.strip().startswith(("jmp", "DMEN", "jsr")) else 2
                       for l in dispatch)
@@ -335,6 +336,10 @@ def main():
                 if not lo <= a <= hi:
                     continue
                 _ = nb
+                if a in inserts:
+                    ins, why = inserts[a]
+                    used_ins.add(a)
+                    out.append("%s        ; INSERTED: %s" % (ins, why))
                 line = src[n - 1]
                 if a in patched:
                     new, why = patched[a]
@@ -475,6 +480,13 @@ def main():
         for b in bad:
             print("dmbanks: " + b)
         sys.exit("dmbanks: FAIL -- a region boundary is not a line boundary")
+
+    miss_ins = sorted(set(inserts) - used_ins)
+    if miss_ins:
+        print("dmbanks: %d declared INSERT(s) landed in no bank:" % len(miss_ins))
+        for a in miss_ins:
+            print("    $%04X  %s" % (a, inserts[a][1]))
+        bad = True
 
     missing = sorted(set(patched) - used)
     if missing:

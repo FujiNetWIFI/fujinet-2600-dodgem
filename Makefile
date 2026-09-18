@@ -20,8 +20,9 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 DET_FRAMES    ?= 3000
+FRAME_COUNT   ?= 900
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem det ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames det ladder clean
 
 all: dodgem
 
@@ -115,7 +116,13 @@ dodgem:
 det: dodgem
 	test/run_det.sh $(DET_FRAMES)
 
-ladder: defs verify-org zp phase anchors banks probe dodgem det
+# ---------------------------------------------------------------- M2a
+# Every frame the same length, and the same length as STOCK -- through five
+# bank switches a frame. The number is learned from stock, not written down.
+frames: dodgem
+	test/run_frames.sh $(FRAME_COUNT)
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames det
 
 defs:
 	./build.sh defs

@@ -58,7 +58,6 @@ gate that had passed at ten for its whole life.
 INPUTS = [
     # (address, expected bytes, replacement source, why)
     (0xF05C, "AD 82 02", "lda     >DMSWB", "starting layout, from P1 difficulty"),
-    (0xF0F5, "AD 82 02", "lda     >DMSWB", "colour/BW and the player colours"),
     (0xF156, "AD 82 02", "lda     >DMSWB", "RESET"),
     (0xF162, "AD 82 02", "lda     >DMSWB", "SELECT -- walks $94 AND $96"),
     (0xF4B3, "AD 82 02", "lda     >DMSWB", "difficulty, end of round"),
@@ -275,5 +274,44 @@ SEAMS = [
     (0xFB23, "60",       "jmp     DMTOG0R", "G1 -> G0: dot engine returns"),
 ]
 
+# ---------------------------------------------------------------------------
+# Work INSERTED rather than substituted. The packer places each bank's regions
+# itself, so a line can be added without displacing anything: the labels move
+# and the assembler re-resolves them.
+#
+# Both of these fill the synthetic controller, and WHERE they are is the whole
+# point. DMMIX first ran from each bank's entry dispatcher, which is before the
+# band's timer is armed -- so its ~46 cycles delayed the arm, delayed the spin
+# that waits the timer out, and lengthened the frame. emu/frames.lua measured
+# 264 scanlines against stock's 262, on every frame, and emu/seams.lua found
+# the same shape at the other end: a switch at scanline 263 with nothing left
+# to absorb it.
+#
+# Inside the band, the spin at the far end swallows it, which is Video
+# Olympics' PORTING.md 3.13 -- the only safe home for work whose length varies
+# is inside a timed band.
+TIMERS = [
+    # The overscan band, one tick shorter.
+    #
+    # The switch back to G0 is the one seam with no wait on its far side: the
+    # band's spin has already expired, and the next WSYNC is four instructions
+    # into the next frame at $F0EA. Thirty-odd cycles of DMGOTO and dispatch
+    # therefore push past the end of the scanline the spin ended on, and the
+    # WSYNC lands a line late -- 263 where stock measures 262, on every frame.
+    #
+    # Giving the band back one 64-cycle tick moves the spin's exit a line
+    # earlier and the switch fits in the room that makes. It costs the overscan
+    # band 64 cycles of slack, which is the band the netcode does NOT run in
+    # (dmdefs.inc picks vblank), and `make slack` is what says the game still
+    # fits in what is left.
+    (0xF426, "A9 24", "lda     #$23", "overscan band: one tick for the seam"),
+]
+
+INSERTS = [
+    (0xF145, "        jsr     DMMIX", "vblank: just after STA TIM64T at $F142"),
+    (0xF42B, "        jsr     DMMIX", "overscan: just after STA TIM64T at $F428"),
+]
+
 ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS),
-       ("POINTER_LOWS", POINTER_LOWS), ("EVICTED", EVICTED), ("SEAMS", SEAMS)]
+       ("POINTER_LOWS", POINTER_LOWS), ("EVICTED", EVICTED), ("SEAMS", SEAMS),
+       ("TIMERS", TIMERS)]
