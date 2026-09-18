@@ -99,7 +99,7 @@ setsid python3 server/dodgem_relay_server.py --host 127.0.0.1 \
 RELAY_PID=$!
 sleep 1
 # THE SAME GUARD THE BoIP PORTS GET, FOR THE SAME REASON. A relay left running
-# by `make play` still owns 9600; this one dies with "Address already in use"
+# by `make play` still owns 9603; this one dies with "Address already in use"
 # into a log nobody reads, the two consoles pair against the OTHER relay, and
 # every verdict below is measured somewhere else. It cost a whole ladder run.
 if ! kill -0 "$RELAY_PID" 2>/dev/null; then
@@ -229,6 +229,65 @@ if grep -qh "^PLAY \|^SNAP " build/rig/c1.out build/rig/c2.out 2>/dev/null; then
             echo "  ok   the two consoles hold DIFFERENT roles ($r1 $r2)"
         fi
     fi
+fi
+
+# THE RASTER, IN A MATCH -- the gate whose absence let a visibly broken picture
+# ship past nineteen green ones.
+#
+# `make frames` runs ONE console with no relay. The session falls back, DME_NET
+# stays clear, and DMWAIT returns on its second instruction: the gate that
+# exists to prove the netcode does not move the raster was measuring a build in
+# which the netcode never ran. In a match every fourth frame was 358 lines
+# against stock's 261 -- a quarter of all frames, on both consoles -- and the
+# only thing that ever reported it was a person looking at the screen.
+#
+# So the claim here is the same one `make frames` makes, against the workload
+# it was always supposed to make it against: both consoles, in a match, every
+# frame the length stock measures.
+if [ "${RIG_LUA:-rig}" = "frames" ]; then
+    echo
+    stock=build/frames_stock.txt
+    if [ ! -f "$stock" ]; then
+        echo "  FAIL no $stock -- run 'make frames' first, so the line count"
+        echo "       being asserted is one STOCK measured and not one written"
+        echo "       down here"
+        echo "FRAMES-MATCH FAIL"; exit 1
+    fi
+    smode=$(grep -m1 "^FRAMES " "$stock" | sed -n 's/.*mode \([0-9]*\) lines.*/\1/p')
+    echo "  stock mode: $smode lines"
+    rc=0
+    for n in 1 2; do
+        # A MISSING REPORT IS A FAILURE, NOT A PASS (PORTING.md 9.2).
+        if ! grep -q "^FRAMES " "build/rig/c$n.out"; then
+            echo "  FAIL console $n never reported at all"; rc=1; continue
+        fi
+        line=$(grep -m1 "^LINES " "build/rig/c$n.out")
+        mode=$(grep -m1 "^FRAMES " "build/rig/c$n.out" | sed -n 's/.*mode \([0-9]*\) lines.*/\1/p')
+        off=$(grep -m1 "^FRAMES " "build/rig/c$n.out" | sed -n 's/.*, \([0-9]*\) not the mode.*/\1/p')
+        echo "  console $n: $line"
+        if [ "$mode" != "$smode" ]; then
+            echo "    FAIL mode is $mode lines, stock measures $smode"; rc=1
+        fi
+        if [ "${off:-0}" -gt 0 ] && grep -q "^BAD FRAME" "build/rig/c$n.out"; then
+            echo "    FAIL frames off the mode, after the boot window:"
+            grep -m3 "^BAD FRAME" "build/rig/c$n.out" | sed 's/^/      /'
+            rc=1
+        fi
+    done
+    # ...and it has to have been a MATCH. A console that never paired draws
+    # perfectly steady frames and would pass this on nothing at all.
+    # NOT `^match:`. THE RELAY TIMESTAMPS EVERY LINE -- "11:53:04 match: ..."
+    # -- so an anchored pattern matches nothing, and this gate failed on its
+    # own regex while the two consoles were paired and playing. PORTING.md 10.4
+    # is the same mistake one section earlier: a gate that greps for evidence
+    # the log does not carry is a gate that reports on itself.
+    if ! grep -q " match: " build/rig/relay.log; then
+        echo "  FAIL the relay never paired the two -- this measured two"
+        echo "       consoles playing alone, which is what make frames does"
+        rc=1
+    fi
+    [ "$rc" = 0 ] && { echo "FRAMES-MATCH PASS"; exit 0; }
+    echo "FRAMES-MATCH FAIL"; exit 1
 fi
 
 if [ "${RIG_LUA:-rig}" = "play" ]; then

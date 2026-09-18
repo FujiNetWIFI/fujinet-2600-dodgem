@@ -251,6 +251,16 @@ IR_LEN  EQU     8               ; every frame a console can receive DURING
 DMGATE  EQU     8               ; TIM64T decrements every 64 cycles, so 8
                                 ;   guarantees 7 * 64 = 448 cycles remain
                                 ;   against a worst step of about 310
+; ...AND THE GATE ABOVE IS ONLY MEANINGFUL WHILE THE TIMER IS STILL RUNNING.
+; After an underflow the RIOT keeps counting and INTIM reads large again, which
+; this gate would read as room. DMWAIT tests bit 7 of TIMINT first -- reading
+; INTIM clears that flag, so the order is not a preference. PORTING.md 14.
+;
+; It is equated HERE and not in vcs.inc: that file is byte-identical across all
+; four sibling ports and is worth keeping that way, and the bank bodies take
+; their hardware equates from the disassembly's own header, which declares only
+; what the 1980 game touches.
+TIMINT  EQU     $0285           ; bit 7: the timer has UNDERFLOWED
 DMBAND  EQU     0               ; 0 = vblank, 1 = overscan. `make slack`
                                 ;   decides it; losing that argument is this
                                 ;   line plus a different hook in patches.py

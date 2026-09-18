@@ -896,3 +896,150 @@ That is the largest single piece of remaining work, and it is cosmetic in the
 sense that nothing about the match depends on it — and not cosmetic at all in
 the sense that a player with no opponent currently sees six seconds of rolling
 picture and then a game that started without telling them.
+
+## 14. Nineteen green gates and a picture that shifted
+
+The port passed every gate in the ladder, the relay counted 4897 records with
+zero checksum mismatches, and the first person to run `make play` and look at
+the screen said the display was shifting every other frame on both consoles.
+
+It was every *fourth* frame — `DMK` is 4 — and it was 97 scanlines:
+
+```
+in a match:   LINES 261:675 358:224 421:1      one frame in four, both consoles
+stock:        LINES 261:1327 262:173
+```
+
+### 14.1 Why nineteen gates had nothing to say
+
+`make frames` is the gate for exactly this claim: *every frame the length stock
+measures*. It runs **one console with no relay**. The session fails to pair,
+falls back, `DME_NET` stays clear — and `DMWAIT`'s second instruction is
+
+```asm
+        lda     DMENT
+        and     #DME_NET
+        beq     DMWAIT9         ; no match: nothing to step
+```
+
+So the gate that exists to prove the netcode does not move the raster was
+measuring a build in which the netcode never ran. Every other frame-shaped gate
+had the same hole: `det`, `stall`, `slack` and `inputs` are all single-console.
+The rig is the only harness that pairs two consoles, and the rig measures
+agreement — and two consoles that agree perfectly can both be drawing 358-line
+frames.
+
+**This is the same failure as §9.2 and §8.2, in its most expensive form.** Not a
+gate that passed on nothing, but a gate that passed on a *different build*: the
+un-networked one. The netcode's per-frame cost had never been measured at all.
+
+`make rig-frames` is the fix — `emu/frames.lua` under the rig, both consoles,
+in a real match, with the relay required to have paired so it cannot pass on
+two consoles playing alone.
+
+### 14.2 What the trace said, after four wrong theories
+
+Everything inferred from `INTIM` alone was wrong. The reads came back as 113
+where the only two arms in the whole build are `$28` and `$23`, and four
+successive theories about prescalers and wraps were all refuted by the next
+measurement. `emu/ftrace.lua` stops inferring and records the frame as a
+sequence — bank switches, timer arms, blits, transport dispatches, every
+`INTIM` the CPU is handed — each stamped in scanlines from the previous VSYNC.
+Two frames, side by side:
+
+```
+262: 6:T28 12:B2 12:i32 13:s ... 32:i8 32:s 33:i7x59  232:B3 233:T23
+358: 5:T28 6:CAP{ 14:}CRC 19:PF5 PF7 PF8 PFA (x9) 40:B2 40:i113 41:s ... 129:i7x58 328:B3
+```
+
+Read across, the healthy frame switches to the kernel bank at line 12 with
+`INTIM` at 32 — real slack — spends 10 steps and starts the picture at line 33.
+The long frame reaches the same switch at line **40**, by which time the vblank
+band armed at line 5 (`$28` = 2560 cycles ≈ 34 lines) has **already expired**,
+and `INTIM` reads 113 because the RIOT keeps counting after it underflows.
+
+Two independent faults, and the arithmetic closes: **28 lines** of vblank work
+that did not fit the band, and **68 lines** of `DMWAIT` spending 113 counts of
+slack that did not exist. 262 + 28 + 68 = 358.
+
+### 14.3 Fault one: a gate that only works while the timer is running
+
+```asm
+DMWLOOP lda     INTIM
+        cmp     #DMGATE
+        bcc     DMWAIT9
+```
+
+The comment above it claimed the loop *cannot overrun by construction*. It
+cannot, while the timer is counting **down**. After an underflow the RIOT keeps
+going and `INTIM` reads large again — and a large `INTIM` is precisely what
+this loop was written to treat as room. It spent all 113 imaginary counts on 43
+transport steps.
+
+The transport was being driven entirely by that accident. It is why the match
+worked: 43 steps on the tick frame and none on the others.
+
+The fix tests the band's **expiry** before its **value**, and the order is not a
+preference — reading `INTIM` clears the underflow flag, so a test after the read
+tests a flag the read has just destroyed:
+
+```asm
+        bit     TIMINT          ; already underflowed? then there is no band
+        bmi     DMWAIT9         ;   left, whatever INTIM claims
+```
+
+### 14.4 Fault two: a cost comment that was never measured
+
+`src/dmpoke.inc` justified the eviction like this:
+
+> the dot bitmap is written when a dot is actually eaten, and player B's saved
+> state at a round end. **Neither is a per-frame cost.**
+
+`emu/pokes.lua` counts blits against frame length, and the claim is false:
+
+```
+  276 x  261 lines, 9 blits, ----
+   93 x  358 lines, 9 blits, TICK
+   23 x  262 lines, 0 blits, ----
+    7 x  262 lines, 0 blits, TICK      <- a tick frame that fits, and is fine
+```
+
+**370 frames in 400 fire nine blits.** `LF032`, the track setup, seeds all nine
+dot rows to `$FF` inside the same loop that lays down the six playfield streams,
+and it runs on very nearly every frame. Nine blits is about 900 cycles where
+nine `sta $AC,x` were 45, and `make slack` says the vblank band's worst frame
+leaves 576. The netcode's tick-boundary work — capture plus checksum, about 600
+cycles — had nowhere to fit.
+
+The fourth line of that table is the one that proves it: a tick frame with no
+blits is 262 lines and perfectly healthy. It is the *combination* that
+overruns.
+
+The seed writes a value the plane usually already holds — `$FF` over a row of
+dots nobody has eaten — so each poke site now compares first:
+
+```asm
+DMPOKED cmp     DMDOTS,x        ; unchanged? then there is nothing to write
+        beq     DMPOKE9
+```
+
+Four cycles to find out against a hundred to do it anyway. The plane is the
+authoritative storage, so writing the byte it already contains cannot be
+observed by anything: a cost removed, not a semantic changed.
+
+### 14.5 After
+
+```
+in a match:   LINES 261:900      both consoles, 0 frames off the mode
+relay:        0 CRC MISMATCH
+```
+
+**The lesson is narrower and sharper than "test more".** Every gate in this
+ladder was written to measure the port. Nineteen of them measured a build in
+which the feature under test was switched off, and none of them could say so,
+because a console with no opponent is a *valid* configuration that they were
+all quietly falling back to. A gate that can silently measure the fallback path
+is a gate that will eventually measure only the fallback path.
+
+The rig existed and was the only harness that could have caught this — it was
+pointed at agreement, and never at the picture.

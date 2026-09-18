@@ -18,6 +18,11 @@ make sim          # the relay protocol, with no emulator anywhere
 make session      # one console, a real socket, a real HELLO
 make rig          # two consoles, one match, zero desyncs
 make rig-repair   # break one on purpose; it has to notice, and it has to heal
+make rig-frames   # the raster IN A MATCH -- make frames measures a console
+                  #   with no opponent, where the netcode never runs at all
+
+make play         # not a gate: two windows, paired, playing
+make stop         # tear that down
 ```
 
 `TVSTD=ntsc` (the default) or `TVSTD=pal`. `TVSTD=secam` is refused, and for

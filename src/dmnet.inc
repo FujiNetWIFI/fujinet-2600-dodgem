@@ -412,14 +412,29 @@ DMSFAIL:
 ; So everything this loop does not use is waited out by code that was going to
 ; wait anyway, and the frame is unchanged. `make frames` is the gate.
 ;
-; THE LOOP CANNOT OVERRUN BY CONSTRUCTION. INTIM is re-read before every step
-; and the loop stops when the slack is gone; there is no budget to get wrong.
-; TIM64T decrements every 64 cycles, so DMGATE = 8 guarantees 512 cycles remain
-; against a worst step of about 310.
+; THE LOOP CANNOT OVERRUN BY CONSTRUCTION -- AND THAT WAS NOT TRUE, because
+; "the slack is gone" and "INTIM is small" are not the same statement.
+;
+; TIM64T decrements every 64 cycles, so DMGATE = 8 leaves 512 cycles against a
+; worst step of about 310. That reasoning is sound only while the timer is
+; still counting DOWN. Once it underflows, the RIOT keeps going and INTIM
+; reads large again -- and a large INTIM is exactly what this loop was written
+; to treat as room. Measured in a real match: the kernel bank was entered one
+; scanline after the vblank band had already expired, INTIM read 113, and this
+; loop spent all 113 of those imaginary counts on 43 transport steps. The frame
+; came out 358 lines against stock's 261, every fourth frame, on both consoles
+; -- a picture that visibly shifts, which is how it was found. See PORTING.md
+; 14.
+;
+; So the band's EXPIRY is tested before its VALUE, and in that order: reading
+; INTIM clears the underflow flag, so a test after the read tests a flag the
+; read just destroyed.
 DMWAIT:
         lda     DMENT
         and     #DME_NET
         beq     DMWAIT9         ; no match: nothing to step
+        bit     TIMINT          ; already underflowed? then there is no band
+        bmi     DMWAIT9         ;   left, whatever INTIM claims
 DMWLOOP:
         lda     INTIM
         cmp     #DMGATE

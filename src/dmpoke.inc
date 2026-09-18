@@ -7,10 +7,25 @@
 ; the cartridge; those pages are cart-to-console.
 ;
 ; So a write becomes four stores to the blit port and one FN_BLIT_POKE. That
-; costs about 30 cycles where a `sta zp,x` cost 4, which is affordable only
-; because of WHICH blocks were evicted: the dot bitmap is written when a dot is
-; actually eaten, and player B's saved state at a round end. Neither is a
-; per-frame cost. PORTING.md 5.2 is the account of why the 54-byte playfield
+; costs about 100 cycles where a `sta zp,x` cost 4, which was justified here by
+; WHICH blocks were evicted: the dot bitmap is written when a dot is actually
+; eaten, and player B's saved state at a round end, so neither is a per-frame
+; cost.
+;
+; THAT WAS WRONG, AND IT WAS NEVER MEASURED. LF032 -- the track setup -- seeds
+; all nine dot rows to $FF inside the same loop that lays down the six
+; playfield streams, and it runs on very nearly every frame: 370 frames in 400
+; fired nine blits. Nine blits is about 900 cycles, and `make slack` says the
+; vblank band's worst frame leaves 576. The netcode's own tick-boundary work
+; then had nowhere to fit, the band expired inside it, and the frame came out
+; 358 lines instead of 261. PORTING.md 14.
+;
+; THE SEED IS A WRITE OF A VALUE THE PLANE USUALLY ALREADY HOLDS -- $FF over a
+; row of dots nobody has eaten yet -- so each site now compares first and fires
+; only on a real change. Four cycles to find out, against a hundred to do it
+; anyway. The plane is the authoritative storage, so a write of the byte it
+; already contains cannot be observed by anything: this is a cost removed, not
+; a semantic changed. PORTING.md 5.2 is the account of why the 54-byte playfield
 ; streams -- the obvious choice, being the biggest -- would have been the worst
 ; one: the kernel reads those twice per scanline pair.
 ;
@@ -29,6 +44,8 @@
 ; JSR whose own first instruction sets the flags it branches on.
 ; ---------------------------------------------------------------------------
 DMPOKED:
+        cmp     DMDOTS,x        ; unchanged? then there is nothing to write
+        beq     DMPOKE9
         sta     FNRSEL+FH_BSL   ; src low = the byte; a one-shot hotspot takes
                                 ;   the data from the store, so this IS the
                                 ;   value, not an address of it
@@ -41,6 +58,8 @@ DMPOKED:
         jmp     DMFIRE
 
 DMPOKEB:
+        cmp     DMSAVB,x        ; unchanged? then there is nothing to write
+        beq     DMPOKE9
         sta     FNRSEL+FH_BSL
         txa
         clc
@@ -74,6 +93,7 @@ DMFIRE1:
         lda     FNBGEN
         cmp     DMTMP
         beq     DMFIRE1
+DMPOKE9:
         rts
 
 ; The low byte of the destination is added to X without handling a carry, and

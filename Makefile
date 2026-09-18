@@ -194,10 +194,40 @@ rig-hold: dodgem
 rig-repair: dodgem
 	SECS=$(SECS) DMRSYT=60 RIG_LUA=play test/run_rig.sh
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig
+# THE RASTER, IN A MATCH. `make frames` runs one console with no relay, so the
+# netcode never runs and the gate measures a build without the thing it is
+# meant to be measuring. This one asserts the same claim against two consoles
+# that are actually paired, and it needs stock's own line count -- hence the
+# dependency on frames rather than on dodgem.
+rig-frames: frames
+	SECS=$(SECS) RIG_LUA=frames FRAME_COUNT=900 test/run_rig.sh
+
+# ...with both players' hands on the stick, on deliberately DIFFERENT
+# schedules: a rig where both consoles press the same thing at the same time
+# cannot tell a mixer that swaps the nibbles from one that drops them.
+rig-play: dodgem
+	SECS=$(SECS) RIG_LUA=play test/run_rig.sh
+
+# The interception proof IN A MATCH, which is the half `make inputs` cannot
+# reach on its own: locally every read comes from DMLOC0, and in a match every
+# read must come from DMCAP and DMLOC0 must not run at all.
+rig-inputs: dodgem
+	SECS=$(SECS) RIG_LUA=inputs test/run_rig.sh
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig rig-frames rig-play
 
 defs:
 	./build.sh defs
+
+# Not a gate -- the thing the gates are for. Two windows, paired, playing.
+# It runs on its OWN BoIP ports and its own build/play tree so a rig teardown
+# cannot reach into it, and refuses to start without a DISPLAY rather than
+# opening two windows nobody can see.
+play: dodgem
+	test/run_play.sh
+
+stop:
+	test/stop.sh
 
 clean:
 	rm -f build/*.p build/*.lst build/*.bin build/*.inc build/*.asm
