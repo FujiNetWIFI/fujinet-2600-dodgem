@@ -20,7 +20,7 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 
-.PHONY: all disasm verify-org defs zp phase anchors probe echo ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo ladder clean
 
 all: verify-org
 
@@ -87,7 +87,16 @@ build/probe.bin: src/probe.asm src/dmcore.inc src/dmdefs.inc src/fujinet.inc src
 echo: probe
 	SECS=$(SECS) test/run_probe.sh
 
-ladder: defs verify-org zp phase anchors probe
+# ---------------------------------------------------------------- M2a
+# The carve. Packing each bank's regions makes every cross-bank REFERENCE an
+# undefined symbol, so the assembler enumerates the seams rather than leaving
+# them to be found at run time as a jump into the middle of a table. It says
+# nothing about a region that simply runs off its end into another bank, so
+# dmbanks.py checks for those separately.
+banks: phase
+	./build.sh banks
+
+ladder: defs verify-org zp phase anchors banks probe
 
 defs:
 	./build.sh defs

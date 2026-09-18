@@ -171,6 +171,26 @@ if [ "${1:-}" = "zp" ]; then
     exit 0
 fi
 
+# ---------------- the bank carve ----------------
+if [ "${1:-}" = "banks" ]; then
+    [ -f build/dm_org.lst ] || "$0" verify-org
+    [ -f build/dmregions.py ] || "$0" phase > /dev/null
+    python3 tools/dmbanks.py build/dm_org.lst build/dm_org.asm build
+    # Assemble each bank and report the seams it cannot resolve. Those are
+    # the cross-bank references, and they are EXPECTED until the trampolines
+    # land -- the point of packing the regions is that the assembler names
+    # them. The count is what has to go to zero, not the build.
+    seams=0
+    for b in g0 g1 g2 g3; do
+        n=$( ( cd build && "$AS" -q -i . -i "$HERE/src" -i . "dm$b.asm" 2>&1 ) \
+             | grep -c 'symbol undefined' || true )
+        printf '  dm%s: %d unresolved cross-bank reference(s)\n' "$b" "$n"
+        seams=$((seams + n))
+    done
+    echo "dmbanks: $seams reference seam(s) + 2 fall-through seam(s) to trampoline"
+    exit 0
+fi
+
 # ---------------- M1: the transaction latency probe ----------------
 #
 # A flat 4K image: one bank of code and the fixed half, no banking -- there is
