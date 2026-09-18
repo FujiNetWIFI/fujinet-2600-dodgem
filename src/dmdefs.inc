@@ -111,6 +111,27 @@ DMTMP   EQU     $C1
 DMFREE1 EQU     $C2
 DMFREE2 EQU     $F9
 
+; ---------------- the union: the session's transport cells ----------------
+;
+; The rings belong to a MATCH. The transaction setup cells belong to the boot
+; bank's session -- HELLO, the appkeys, waiting for START -- which finishes
+; before a match can start. The two sets are never live at the same time, so
+; they share addresses.
+;
+; What makes that safe is a property of dmnet.inc and not of the schedule: the
+; match-time network machine writes the cartridge's registers DIRECTLY and
+; never calls FNBEG, so nothing during a match reads FNDEV, FNCMD or FNNPR.
+; The siblings do the same and for the same reason. If a future net machine
+; ever calls FNBEG, this union is the first thing that breaks and it will break
+; as a desync rather than as a build error, so: do not.
+FNDEV   EQU     DMRIN0          ; transaction setup, read by FNBEG
+FNCMD   EQU     DMRIN1
+FNNPR   EQU     DMRIN2
+FNTMO   EQU     DMLOC0          ; timeout in ~0.6s quanta
+FNCNT   EQU     DMLOC1          ; timeout quanta remaining
+FNSEQ   EQU     DMSEQ           ; not a union: the sequence IS the same
+                                ;   quantity in both phases
+
 ; ---------------- band-local: the synthetic controller ----------------
 ;
 ; Rebuilt twice a frame by DMMIX -- once at the head of the vblank band and

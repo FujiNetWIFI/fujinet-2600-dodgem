@@ -20,7 +20,7 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 
-.PHONY: all disasm verify-org defs zp phase anchors ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors probe echo ladder clean
 
 all: verify-org
 
@@ -72,7 +72,22 @@ phase: verify-org
 anchors: verify-org
 	./build.sh anchors
 
-ladder: defs verify-org zp phase anchors
+# ---------------------------------------------------------------- M1
+# What does one mailbox transaction cost, in video frames? Every latency
+# number in this port hangs off that figure, and the family's rule is that it
+# is MEASURED and not inherited -- the Intellivision ports believed a
+# documented 30 Hz tick for years when it was 10.
+#
+# `make echo` needs a fujinet-pc and tools/latency_probe_server.py. Until it
+# has actually been run HERE, nothing may quote a constant from a sibling.
+probe: build/probe.bin
+build/probe.bin: src/probe.asm src/dmcore.inc src/dmdefs.inc src/fujinet.inc src/vcs.inc build.sh
+	./build.sh probe
+
+echo: probe
+	SECS=$(SECS) test/run_probe.sh
+
+ladder: defs verify-org zp phase anchors probe
 
 defs:
 	./build.sh defs

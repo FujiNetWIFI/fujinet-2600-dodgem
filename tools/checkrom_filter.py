@@ -30,7 +30,7 @@ It also corrects the reported address. checkrom.py labels every bank but bank 0
 as though it were based at $1800, which is right for the fixed half and wrong
 for the banked ones -- they are all mapped at $1000.
 
-Usage: checkrom_filter.py <checkrom.py> <image.bin>
+Usage: checkrom_filter.py <checkrom.py> <image.bin> [listing[@base] ...]
 """
 
 import os
@@ -41,10 +41,26 @@ import sys
 BANK_SZ = 0x800
 
 # slot in the image -> (listing, the address that slot is mapped at)
-SLOTS = [("build/tnboot.lst", 0x1000),
-         ("build/tngame.lst", 0x1000),
-         ("build/tnkern.lst", 0x1000),
-         ("build/tntail.lst", 0x1800)]
+# The listings that supply the instruction-boundary map, and where each one is
+# mapped. Given on the command line after the image, because this port builds
+# two different shapes -- a flat 4K probe with one listing, and the client with
+# five -- and a hardcoded list would silently judge the wrong one. A listing
+# named without a base is taken as a banked $1000 slot; the fixed half must say
+# $1800 explicitly.
+DEFAULT_SLOTS = [("build/dmg0.lst", 0x1000),
+                 ("build/dmg1.lst", 0x1000),
+                 ("build/dmg2.lst", 0x1000),
+                 ("build/dmg3.lst", 0x1000),
+                 ("build/dmboot.lst", 0x1000),
+                 ("build/dmtail.lst", 0x1800)]
+
+
+def slots_from_argv(argv):
+    out = []
+    for a in argv:
+        lst, _, b = a.partition("@")
+        out.append((lst, int(b, 0) if b else 0x1000))
+    return out or DEFAULT_SLOTS
 
 FINDING = re.compile(
     r"^checkrom: (?P<img>\S+): bank (?P<bank>\d+) \$(?P<addr>[0-9A-Fa-f]{4}): (?P<what>.*)$")
@@ -79,6 +95,7 @@ def boundaries(path):
 
 def main():
     tool, image = sys.argv[1], sys.argv[2]
+    SLOTS = slots_from_argv(sys.argv[3:])
     img = open(image, "rb").read()
     r = subprocess.run([sys.executable, tool, image], capture_output=True, text=True)
     sys.stdout.write(r.stdout)
