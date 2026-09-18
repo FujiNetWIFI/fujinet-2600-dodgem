@@ -381,3 +381,66 @@ the `STA WSYNC` at `$F422`, `$F4EA` in front of `$F0E8`'s.
 and the pairwise overlaps before choosing any boundary. The address-space
 answer and the phase answer are different questions, and only the second one
 builds.
+
+---
+
+## 7. M1: what a transaction costs, measured here
+
+```
+FRAMES 1177  ROUNDS 391  ERR $00
+OPEN    n=1     mean=1.00 min=1 max=1
+WRITE   n=392   mean=1.00 min=1 max=1
+STATUS  n=392   mean=1.00 min=1 max=1
+READ    n=391   mean=1.00 min=1 max=1
+TICK 3.0 frames for WRITE+STATUS+READ = 20.0 Hz
+```
+
+One frame per transaction, three frames per lockstep tick, 20 Hz — the same
+figure Combat and Video Olympics measured, and `min = max = 1` on every step,
+so it is not a mean hiding jitter.
+
+That is the number `DMK EQU 4` is chosen against: a 4-frame tick is 15 Hz
+against a 20 Hz transport, so the transport has room and a tick that misses is
+a stall rather than a permanent deficit. The family's rule is that this is
+MEASURED and never inherited — the Intellivision ports believed a documented
+30 Hz tick for years when it was 10 — and Dragster makes its `make echo` exit 1
+rather than quote a sibling's constant. This one has now actually been run.
+
+### 7.1 A harness and a ROM can disagree in silence, in both directions
+
+The first run reported `ROUNDS 0` while the echo server, independently,
+reported **588 rounds, 588 bytes, 51.00 ms mean inter-arrival**. Nothing was
+wrong with either. `emu/latency.lua` arrived from a sibling carrying
+
+```lua
+local VOST, VOERR, VOFCNT = 0xF7, 0xD5, 0xFA
+```
+
+and a comment saying to keep those in step with the assembly by hand. This port
+had moved the probe's counters off the top of RAM — a probe that puts its
+counters under the stack is measuring how deep it nested — and the harness went
+on tapping three cells that no longer meant anything.
+
+Both halves of that are worth keeping. The harness reported a plausible,
+quiet, *wrong* answer rather than an error; and the only reason it was caught
+at all is that a second, independent observer — the echo server on the far end
+of the socket — was counting the same thing a different way.
+
+*The rule:* **a harness that taps a ROM by address must take the addresses FROM
+the ROM.** `tools/mksyms.py` now reads them out of the assembler's listing and
+writes the Lua table `emu/latency.lua` loads. And `DMSYMS` is passed as an
+ABSOLUTE path, because MAME has to be run from its own tree or
+`-autoboot_script` is silently ignored, so every relative path a harness opens
+resolves against MAME's directory and not the project's.
+
+*Also worth having two of:* the echo server's independent count is what turned
+a silent zero into a diagnosis. A gate that measures one thing one way cannot
+tell you it is measuring the wrong cell.
+
+### 7.2 Observed, not caused by this port
+
+`fujinet-pc` segfaults during its own shutdown — after `All devices shut down`,
+in `NetworkProtocolTCP::dtor` — every time the rig sends it TERM. It happens
+after the measurement is complete and does not affect the numbers, and it
+reproduces with the stock distribution in `build/rig/fn1`, so it is recorded
+here rather than worked around.
