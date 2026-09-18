@@ -204,7 +204,18 @@ POINTER_LOWS = [
 # $F4C6's `LDA $81` is displaced rather than duplicated, so the flags $F4C8
 # consumes are the ones it always had.
 GATES = [
-    (0xF4C6, "A5 81", "jmp     DMOVGATE", "overscan: the movement chain"),
+    # AT THE HEAD OF THE BAND, NOT AT THE MOVEMENT CHAIN.
+    #
+    # This was $F4C6, which gates LF5BF's turns, LF5A0's swap and the $82/$97
+    # counters -- and leaves the three DELAY COUNTDOWNS at $F42E-$F452 running
+    # on every frame, stalled or not. Video Olympics' PORTING.md 3.16 is the
+    # rule: everything left ungated becomes a function of the local stall
+    # pattern, and the stall pattern is the one thing two consoles differ in by
+    # design. Measured: the pair disagreed on $86 from their first tick.
+    #
+    # $F42E is the first instruction after LF577 and everything from there to
+    # the band's spin is simulation, so one gate here covers all of it.
+    (0xF42E, "A5 86", "jmp     DMOVGATE", "overscan: the whole chain"),
 ]
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,8 @@ make rig          # two consoles, one match, zero desyncs
 make rig-repair   # break one on purpose; it has to notice, and it has to heal
 make rig-frames   # the raster IN A MATCH -- make frames measures a console
                   #   with no opponent, where the netcode never runs at all
+make rig-switch   # ...and the synthetic SWCHB MEANS what the game thinks:
+                  #   RESET and SELECT high at idle, and reachable by a press
 
 make play         # not a gate: two windows, paired, playing
 make stop         # tear that down

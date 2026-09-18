@@ -24,18 +24,24 @@
 ; what lets `make det` prove this build is the 1980 cartridge.
 
 ; ---------------------------------------------------------------------------
-; DMOVGATE -- the overscan chain's gate. Patched in at $F4C6.
+; DMOVGATE -- the overscan chain's gate. Patched in at $F42E.
 ;
-; It owes the game the instruction it displaced: `LDA $81`, which $F4C8's
-; `AND #$7F` consumes. Doing that here rather than duplicating $F4C8 keeps the
-; chain's own flags exactly as they were.
+; It owes the game the instruction it displaced and the three that follow it,
+; because $F430 is in the middle of a run with no label to return to. Four
+; instructions duplicated is the price of gating the countdowns; the
+; alternative was a gate that let them run.
 ; ---------------------------------------------------------------------------
 DMOVGATE:
         lda     DMADV
         beq     DMOVSKIP
-        lda     $81             ; the displaced instruction
-        jmp     LF4C6+2
+        lda     $86             ; the displaced instruction...
+        and     #$3F            ; ...and its run, re-laid rather than jumped
+        beq     DMOVG1          ;   back into
+        dec     $86
+        jmp     LF4EA
+DMOVG1:
+        jmp     LF439
 
 DMOVSKIP:
-        jmp     LF4EA           ; straight to the band's spin: no movement, no
-                                ;   swap, no counters
+        jmp     LF4EA           ; straight to the band's spin: no countdowns,
+                                ;   no movement, no swap, no counters

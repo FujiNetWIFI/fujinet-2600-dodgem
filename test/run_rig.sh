@@ -231,6 +231,31 @@ if grep -qh "^PLAY \|^SNAP " build/rig/c1.out build/rig/c2.out 2>/dev/null; then
     fi
 fi
 
+# THE SYNTHETIC SWCHB, IN A MATCH -- do the shadows MEAN what the game thinks?
+#
+# `make inputs` proves every console-port read comes from the shim. It proves
+# nothing about the VALUES the shim hands back, and that is a separate claim
+# with its own failure: the wire byte carries SELECT at bit 5 and RESET at bit
+# 4, SWCHB carries them at bits 1 and 0, and the mixer stored them straight
+# across. Both port bits read zero for ever -- active low -- so from the moment
+# a match began the game saw RESET and SELECT held down, and no press by either
+# player could reach it. Both consoles computed the same wrong byte, so every
+# gate that measures agreement passed. PORTING.md 15.
+if [ "${RIG_LUA:-rig}" = "switch" ]; then
+    echo
+    rc=0
+    for n in 1 2; do
+        echo "== console $n =="
+        grep -E "^SWCHB|^  (ok|FAIL|--)" "build/rig/c$n.out" | sed 's/^/  /'
+        grep -q "^SWITCH PASS" "build/rig/c$n.out" || rc=1
+        # A MISSING VERDICT IS A FAILURE, NOT A PASS.
+        grep -qE "^SWITCH (PASS|FAIL)" "build/rig/c$n.out" \
+            || { echo "  FAIL console $n never reported"; rc=1; }
+    done
+    [ "$rc" = 0 ] && { echo "SWITCH PASS"; exit 0; }
+    echo "SWITCH FAIL"; exit 1
+fi
+
 # THE RASTER, IN A MATCH -- the gate whose absence let a visibly broken picture
 # ship past nineteen green ones.
 #

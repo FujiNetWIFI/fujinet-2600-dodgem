@@ -194,6 +194,13 @@ rig-hold: dodgem
 rig-repair: dodgem
 	SECS=$(SECS) DMRSYT=60 RIG_LUA=play test/run_rig.sh
 
+# DO THE SHADOWS MEAN WHAT THE GAME THINKS? `make inputs` proves every read
+# comes from the shim; this proves the shim hands back a faithful SWCHB, with
+# RESET and SELECT at the bits the hardware puts them at and reachable by a
+# press. Nothing asserted that, and for a while neither switch worked at all.
+rig-switch: dodgem
+	SECS=$(SECS) RIG_LUA=switch test/run_rig.sh
+
 # THE RASTER, IN A MATCH. `make frames` runs one console with no relay, so the
 # netcode never runs and the gate measures a build without the thing it is
 # meant to be measuring. This one asserts the same claim against two consoles
@@ -214,7 +221,7 @@ rig-play: dodgem
 rig-inputs: dodgem
 	SECS=$(SECS) RIG_LUA=inputs test/run_rig.sh
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig rig-frames rig-play
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig rig-switch rig-frames rig-play
 
 defs:
 	./build.sh defs

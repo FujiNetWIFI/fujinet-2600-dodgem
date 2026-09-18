@@ -48,23 +48,7 @@ DMBENT:
 ; Counting DOWN from $7F. Counting up from $00 to $FF would be the stock
 ; sweep's shape and would take the netcode's cells with it; counting down from
 ; the top of the TIA stops exactly where it should.
-        lda     #0
-        ldx     #$7F
-DMBCLR: sta     $00,x           ; the TIA, which the game expects cleared
-        dex
-        bpl     DMBCLR
-        ldx     #$2B            ; $80-$AB, the game's own variables
-DMBCL2: sta     $80,x
-        dex
-        bpl     DMBCL2
-        ldx     #$06            ; $B5-$BB, player A's saved block
-DMBCL3: sta     $B5,x
-        dex
-        bpl     DMBCL3
-        ldx     #$35            ; $C3-$F8, the six playfield streams
-DMBCL4: sta     $C3,x
-        dex
-        bpl     DMBCL4
+        jsr     DMZERO
 
         jsr     FNARM
         jsr     FNCHK           ; Z set if 'F','N' is there
@@ -165,6 +149,38 @@ DMHAND:
         lda     DMENT
         and     #DME_NET
         beq     DMHCOLD
+
+; CLEARED AGAIN, HERE, AND THE SECOND TIME IS THE ONE THAT MATTERS.
+;
+; The clear at DMBENT happens before the session; between it and this handover
+; the console opens a socket, reads an appkey and POLLS FOR A PEER -- and that
+; poll runs for however long the other player takes to arrive, which is a
+; different number of frames on the two consoles. Whatever the boot bank leaves
+; in the game's cells is therefore not the same on both, and the game bank is
+; entered past $F0CA's sweep precisely so the netcode's cells survive.
+;
+; Measured before this was here: the two consoles disagreed from their VERY
+; FIRST TICK, on $86, by one -- and stayed apart until the repair pressed RESET
+; and the game re-seeded itself 49 ticks later. A match that begins by healing
+; is a match that began wrong.
+;
+; It is safe after the seeding rather than before it because the ranges are
+; disjoint by construction: this clears $80-$AB, $B5-$BB and $C3-$F8, and every
+; cell the netcode owns lives in $AC-$B4, $BC-$C2 or $F9.
+        jsr     DMZERO
+
+; ...AND THE SHADOWS ARE LEFT AT IDLE, NOT AT ZERO, which is the clear's one
+; sharp edge. DMZERO sweeps $80-$AB, and the four input shadows live in there:
+; between it and the first derivation a frame can be drawn in which the game
+; reads DMSWB as $00 -- and a zero SWCHB is RESET and SELECT held down and the
+; stick shoved in every direction at once (Combat's PORTING.md 4.8). It showed
+; up as exactly one idle frame in a hundred and eight, on one console.
+        lda     #$FF
+        sta     DMSWA
+        sta     DMSWB
+        sta     DMTR4
+        sta     DMTR5
+
         lda     #BANKG3
         ldy     #DMEN_NET       ; past the clear: we have something to lose
         jmp     DMGOTO
@@ -175,6 +191,33 @@ DMHCOLD:
         lda     #BANKG3
         ldy     #DMEN_CLD
         jmp     DMGOTO
+
+; ---------------------------------------------------------------------------
+; DMZERO -- clear what the game needs cleared, and nothing the netcode owns.
+;
+; Counting DOWN from $7F. Counting up from $00 to $FF would be the stock
+; sweep's shape and would take the netcode's cells with it; counting down from
+; the top of the TIA stops exactly where it should.
+; ---------------------------------------------------------------------------
+DMZERO:
+        lda     #0
+        ldx     #$7F
+DMBCLR: sta     $00,x           ; the TIA, which the game expects cleared
+        dex
+        bpl     DMBCLR
+        ldx     #$2B            ; $80-$AB, the game's own variables
+DMBCL2: sta     $80,x
+        dex
+        bpl     DMBCL2
+        ldx     #$06            ; $B5-$BB, player A's saved block
+DMBCL3: sta     $B5,x
+        dex
+        bpl     DMBCL3
+        ldx     #$35            ; $C3-$F8, the six playfield streams
+DMBCL4: sta     $C3,x
+        dex
+        bpl     DMBCL4
+        rts
 
 ; ---------------------------------------------------------------------------
 ; DMFALLB -- put the build-time endpoint into path buffer 0.

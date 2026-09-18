@@ -140,19 +140,28 @@ DMNETG:
 ; preference: each player keeps their own setting, it never reaches the wire,
 ; and $F0F5 reads the live port for it. Putting it on the wire would make one
 ; player's television decide the other's.
+; THE WIRE BYTE IS NOT A PORT BYTE, and this is where that was forgotten.
+;
+; The wire carries SELECT at bit 5 and RESET at bit 4 -- DMCAP puts them there
+; with four ASLs so the byte packs. SWCHB carries RESET at bit 0 and SELECT at
+; bit 1. The first version stored them straight across, so both port bits read
+; zero for ever -- AND THEY ARE ACTIVE LOW. From the moment a match began the
+; game saw RESET and SELECT held down: it re-ran its track setup on very nearly
+; every frame, which is where PORTING.md 14.4's nine-blits-a-frame came from,
+; and no press by either player could reach it, because the bits they would
+; have cleared were already clear.
+;
+; Both consoles computed the same wrong byte, so the rig agreed with itself
+; perfectly. PORTING.md 15.
 DMNETSW:
         lda     DMLOC2
         and     DMTMP           ; RESET and SELECT: pressed if EITHER pressed,
         and     #IW_SEL|IW_RST  ;   and both are active low, so AND is OR
-        sta     DMSWB
-        lda     DMLOC2
-        and     #IW_DIFF        ; the host's difficulty -> SWCHB bit 7
-        ora     DMSWB
-        sta     DMSWB
-        lda     DMTMP
-        and     #IW_DIFF        ; the guest's -> bit 6
+        lsr                     ; wire bits 5,4...
         lsr
-        ora     DMSWB
+        lsr
+        lsr                     ; ...are port bits 1,0
+        ora     DMDIFF          ; the difficulty pair, already in port space
         sta     DMSWB
         lda     SWCHB           ; ...and B/W, live and local
         and     #$08
@@ -165,9 +174,14 @@ DMNETSW:
 ; The shadows keep last tick's values, which is what a stalled frame wants:
 ; the picture is drawn from them and a stalled frame should look like the one
 ; before it, not like a console with its stick released.
+; THE STALL DECISION IS NOT MADE HERE ANY MORE, and that is the point.
+;
+; DMDERIV runs in BOTH bands. Clearing DMADV from here could stop the sim
+; between the vblank chain and the overscan one -- half a frame of logic -- and,
+; worse, could stop it part way through a tick, which is how the two consoles
+; came to have taken a different number of logic steps for the same tick.
+; DMMIXV decides once, at the boundary. This just leaves the shadows alone.
 DMNETST:
-        lda     #0
-        sta     DMADV
         rts
 
 ; ---------------------------------------------------------------------------
@@ -186,7 +200,16 @@ DMREMOTE:
         lda     DMRWAT
         sec
         sbc     DMTICK          ; how far ahead of us the peer is
-        bcc     DMREM9          ; behind us: nothing to apply
+; SIGNED, BECAUSE THE TICK IS EIGHT BITS AND WRAPS. This was an unsigned BCC,
+; wrong in exactly one place -- and the seed parks the console there. DMTICK
+; starts at $FF, the peer's first record is stamped its $FF + DMD = $01, and
+; $01 - $FF is 2 WITH A BORROW: the carry says "behind us" about a peer two
+; ticks ahead. So every match began with the sim frozen across the wrap, for a
+; number of frames that depended on when each console's first record happened
+; to land -- a different number on the two consoles, which is the one thing
+; lockstep cannot survive. The receive path at DMCO3 always did this test
+; signed; this one did not. PORTING.md 15.3.
+        bmi     DMREM9          ; behind us: nothing to apply
         cmp     #DMWIN
         bcs     DMREM9          ; further ahead than the window reaches
         tax

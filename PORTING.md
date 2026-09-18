@@ -1043,3 +1043,173 @@ is a gate that will eventually measure only the fallback path.
 
 The rig existed and was the only harness that could have caught this — it was
 pointed at agreement, and never at the picture.
+
+## 15. The port had never run a match
+
+`make play` put two windows on a desk and a person looked at them. One console
+flashed between colour and black-and-white; neither RESET nor SELECT did
+anything on either. Every gate in the ladder was green, the relay had counted
+4897 records with zero checksum mismatches, and `playdiff` said the two
+simulations agreed on every tick it compared.
+
+They agreed because **both consoles were frozen**. The game had been held in
+permanent RESET since the instant either of them joined a match, and two frozen
+consoles agree perfectly.
+
+Behind that one bug were four more, each of which the freeze had been hiding.
+
+### 15.1 The wire byte is not a port byte
+
+`DMCAP` packs SELECT at bit 5 and RESET at bit 4, because bits 0-3 are the
+stick. `SWCHB` puts RESET at bit 0 and SELECT at bit 1. `DMNETSW` stored them
+straight across:
+
+```asm
+        and     #IW_SEL|IW_RST  ; bits 5 and 4...
+        sta     DMSWB           ; ...into a byte the game reads at 1 and 0
+```
+
+Both port bits therefore read zero for ever — **and they are active low**. The
+game saw RESET and SELECT held down from the first frame of every match. It
+re-ran its track setup on very nearly every frame, which is where §14.4's nine
+blits came from, and no press by either player could reach it, because the bits
+they would have cleared were already clear.
+
+Tennis's `tncap.inc` carries this bug's mirror image and its epitaph: *"both
+halves look right in isolation and the pair is silently broken. It survives
+every gate that only checks agreement: two consoles that both ignore SELECT
+agree perfectly."*
+
+The same block had a second fault. `SWCHB` bit 6 is P0's difficulty and bit 7 is
+P1's; the host drives the left port and IS P0, the guest is P1 — but `DMLOC2`
+is whichever of the two *this* console is, and the derivation was role-blind.
+Two MAMEs with identical switch defaults never differ, so it could not show.
+
+### 15.2 A tick that ran partly
+
+The sim advances once per FRAME; the inputs are fixed once per TICK, and a tick
+is `DMK` = 4 frames. So the quantity that must be identical on both consoles is
+the number of ADVANCED frames. `DMADV` was set every frame and cleared whenever
+the peer's byte was missing — so a record landing part way through a tick
+stalled the frames before it and advanced the frames after it, and that tick got
+fewer logic steps here than it got there.
+
+```
+console 1:  advanced=1171  stalled=29      both on tick 43
+console 2:  advanced=1183  stalled=17
+```
+
+Nothing brings two consoles back from that. The decision is taken once now, at
+the boundary, and on a stall **the phase is not stepped** — the next frame is
+the same boundary again, which is what retrying a tick means. Tennis states the
+rule in one line and this port had to measure it: *"the frame counters are not
+ticked either, which is what keeps $84 a count of simulated frames on both
+consoles however differently they stalled."*
+
+Afterwards: `advanced=1182 stalled=18 tick=38 $82=$AB` on both.
+
+### 15.3 The one unsigned compare
+
+```asm
+        lda     DMRWAT
+        sec
+        sbc     DMTICK
+        bcc     DMREM9          ; behind us: nothing to apply
+```
+
+Wrong in exactly one place — and the seed parks the console there. `DMTICK`
+starts at `$FF`, the peer's first record is stamped its `$FF + DMD` = `$01`,
+and `$01 - $FF` is 2 **with a borrow**: the carry says "behind us" about a peer
+two ticks ahead. Every match began with the sim frozen across the wrap for a
+number of frames that depended on when each console's first record happened to
+land — a different number on the two consoles.
+
+The receive path at `DMCO3` had always done this test signed. This one had not.
+
+### 15.4 Three countdowns outside the gate
+
+`DMOVGATE` was patched in at `$F4C6`, which gates the movement chain: `LF5BF`'s
+turns, `LF5A0`'s swap, and the `$82`/`$97` counters. The three delay countdowns
+at `$F42E`-`$F452` sit **before** it:
+
+```asm
+        JSR     LF577
+        LDA     $86 / AND #$3F / BEQ / DEC $86      <- ran on stalled frames
+        LDA     $94 / AND #$3F / BEQ / DEC $94      <- and this
+```
+
+Video Olympics' §3.16 is the rule: everything left ungated becomes a function of
+the local stall pattern, and the stall pattern is the one thing two consoles
+differ in by design. The gate moved to `$F42E`, the first instruction after
+`LF577`, where one test covers the countdowns, the movement chain and the
+counters together.
+
+### 15.5 The handover, and a zero that means "everything pressed"
+
+Two consoles hand over to the game bank whenever their own session finishes, and
+the poll in between runs for however long the other player takes to arrive. The
+game bank is entered past `$F0CA`'s sweep precisely so the netcode's cells
+survive it — so whatever the boot bank left in the *game's* cells went into the
+match, and it was not the same on both. They disagreed from their very first
+tick, on `$86`, by one.
+
+The bounded clear now runs a second time, at the handover, after the seeding —
+safe because the ranges are disjoint by construction.
+
+And it leaves the four input shadows at `$FF` rather than at zero, which is the
+clear's one sharp edge: between `DMZERO` and the first derivation a frame can be
+drawn in which the game reads `DMSWB` as `$00`, and a zero `SWCHB` is RESET and
+SELECT held down with the stick shoved in every direction at once (Combat
+§4.8). It showed as exactly one idle frame in a hundred and eight, on one
+console.
+
+### 15.6 Why nothing caught any of it
+
+Every one of these is invisible to a gate that compares the two consoles to each
+other, and that is what the rig did. Worse, three of them are invisible in
+ATTRACT specifically, because with nobody's hands on anything every byte on the
+wire is `IDLE` — and a stale `IDLE` and a fresh one are the same byte. The
+netcode's own `dmnet.inc` says exactly that about a different bug, one section
+earlier.
+
+Two gates now assert values rather than agreement:
+
+- **`make rig-switch`** — the synthetic `SWCHB` is a faithful port byte: RESET
+  and SELECT read high at idle and reach the game when pressed. It is the gate
+  that would have caught 15.1 on the day it was written.
+- **`make rig-frames`** (§14) — the raster, in a real match.
+
+And three harness bugs on the way, all of the same family as the ones they were
+hunting:
+
+1. `switch.lua` sampled `DMSWB` from a frame notifier. `$87` is band-local — the
+   kernel writes it as glyph scratch about twelve times a frame — so the gate
+   reported values the shim cannot produce and **failed a correct build**. It
+   samples on the VSYNC write now, the last point the shim wrote it.
+2. It then failed on 13 idle frames in 180, which was exactly the delay it
+   exists downstream of: a press lands `DMD` ticks later and leaves the same
+   way. Every window has a settling margin now.
+3. Its first verdict printed *"ok SELECT reached the game in 60 of 60 held
+   frames"* about a build in which bit 1 was stuck at zero. **A bit that is
+   already low cannot be evidence of a press.** The press check is only made
+   where the idle baseline was clean.
+
+`check_zp` also did its job: moving the difficulty pair into a zero-page cell
+spent the one spare the census insists on holding back, and it failed the build
+rather than let the map fit exactly. The pair lives in the cartridge text plane
+now — it is two console switches, so it changes never, and the poke fires only
+on a change.
+
+### 15.7 After
+
+```
+playdiff: 659 ticks compared, 0 differ -- the two simulations never diverged
+relay:    0 CRC MISMATCH
+SWCHB:    idle $0B  select $09  reset $0A     identical on both consoles
+```
+
+**The lesson is the one the family keeps relearning, in its sharpest form yet.**
+Nineteen gates were green over a port that had never once run a match. Not one
+of them was wrong about what it measured; they measured agreement, and two
+consoles that are both broken in the same way agree perfectly. The only
+instrument that found it was a person looking at a screen.

@@ -96,8 +96,9 @@ DMRDN   EQU     $B3
 ; no room for the cell the next bug needs, and in this family there is always
 ; one more cell. Do not allocate these to make something fit; work out why it
 ; did not fit.
-DMFREE1 EQU     $B4
-
+DMFREE1 EQU     $B4             ; HELD BACK ON PURPOSE. check_zp.py fails the
+                                ;   build without it: a map that fits exactly
+                                ;   has no room for the next bug.
 ; The peer's input window, newest first: DMRIN0 is tick DMRWAT, DMRIN1 is
 ; DMRWAT-1, DMRIN2 is DMRWAT-2. THREE, not one: a lockstep transport that sends
 ; exactly one tick per packet is betting it never misses a beat, and it will
@@ -182,8 +183,20 @@ DMTR5   EQU     $AA             ; synthetic INPT5  --  2 patch sites
 ; page-cross and is always four cycles, never five.
 DMDOTS  EQU     $1AE0           ; was $AC,X -- 9 bytes, the per-row dot bitmap
 DMSAVB  EQU     $1AF0           ; was $BC,X -- 7 bytes, player B's saved state
-DMDOTSO EQU     DMDOTS-FNTEXT   ; the same two, as plane OFFSETS, which is what
-DMSAVBO EQU     DMSAVB-FNTEXT   ;   FN_BLIT_POKE's destination takes
+DMDIFF  EQU     $1AF8           ; the two difficulty bits, P0's at bit 6 and
+                                ;   P1's at bit 7 -- ALREADY IN PORT SPACE.
+                                ;
+                                ; Netcode state, in the plane rather than in
+                                ; zero page, because zero page has one cell
+                                ; left and check_zp.py is right to insist that
+                                ; cell stays spare. It earns its place there:
+                                ; it is a pair of console switches, so it
+                                ; changes never, and the poke below fires only
+                                ; on a change. Two reads a frame at four cycles
+                                ; each is the whole running cost.
+DMDOTSO EQU     DMDOTS-FNTEXT   ; the same three, as plane OFFSETS, which is
+DMSAVBO EQU     DMSAVB-FNTEXT   ;   what FN_BLIT_POKE's destination takes
+DMDIFFO EQU     DMDIFF-FNTEXT
 
 ; ---------------- DMENT ----------------
 DME_NET EQU     $01             ; in a match
