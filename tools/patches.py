@@ -308,8 +308,9 @@ TIMERS = [
 ]
 
 INSERTS = [
-    (0xF145, "        jsr     DMMIX", "vblank: just after STA TIM64T at $F142"),
-    (0xF42B, "        jsr     DMMIX", "overscan: just after STA TIM64T at $F428"),
+    (0xF145, "        jsr     DMMIXV", "vblank: steps the clock, then derives"),
+    (0xF42B, "        jsr     DMMIXO", "overscan: re-derives only -- a clock "
+                                       "stepped twice a frame is not a clock"),
 ]
 
 ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS),

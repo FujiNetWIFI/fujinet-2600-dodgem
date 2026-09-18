@@ -1,31 +1,51 @@
-; dmmix.inc -- fill the synthetic controller.
+; dmmix.inc -- fill the synthetic controller, and step the sim clock.
 ;
 ; The twenty-four patched read sites do not read a console port any more; they
 ; read DMSWA, DMSWB, DMTR4 and DMTR5. This is the one place those are written,
-; and `make inputs` is the gate that says so: after the patch, every read of a
-; real port in a whole run comes from in here.
+; and `make inputs` is the gate that says so.
 ;
-; IT RUNS TWICE A FRAME, once at the head of each band, from each bank's entry
-; dispatcher. That is not waste. The four shadows are BAND-LOCAL -- they live
-; in cells the game owns and does not touch across a band, because there were
-; no other cells to have (dmdefs.inc) -- so they do not survive the kernel and
-; have to be rebuilt on the far side of it. Both derivations come from the same
-; inputs, so they cannot disagree.
+; TWO ENTRY POINTS, ONE PER BAND, AND THEY DO DIFFERENT AMOUNTS OF WORK.
 ;
-; The un-networked path is the PLAIN one and the networked path will be added
-; in front of it. Combat's PORTING.md 4.13 is the rule: a cartridge with no
-; server is still a Dodge 'Em cartridge, and `make det` -- the gate that proves
-; this build plays exactly like the 1980 ROM -- depends on the local path being
-; ordinary rather than a special case bolted on afterwards.
+; The four shadows are BAND-LOCAL -- they live in cells the game owns and does
+; not touch across a band, because there were no other cells to have
+; (dmdefs.inc) -- so they do not survive the kernel and have to be rebuilt on
+; the far side of it. That is why the derivation runs twice.
 ;
-; Preserves Y. The dispatcher still needs it: it is the entry index DMGOTO
-; carried in, and the jump that follows this call reads it.
+; But the SIM CLOCK must step exactly ONCE a frame, and a quantity stepped
+; twice is not a clock. So the stepping, the tick boundary and the capture all
+; belong to the vblank call alone; the overscan call re-derives the shadows
+; from state that has already been decided and adds nothing of its own.
+;
+; Both derivations therefore come from the same bytes and cannot disagree,
+; which is what makes the split safe rather than merely convenient.
+;
+; Preserves Y: the bank dispatcher still needs it. Called from inside each
+; band's timed window, never before the timer is armed -- work in front of an
+; arm lengthens the frame, and `make frames` measured exactly that.
 
-DMMIX:
-        IF      1               ; the networked path goes here, in front
-        ENDIF
+; ---------------------------------------------------------------------------
+; DMMIXV -- the vblank call. Steps the clock, then derives.
+; ---------------------------------------------------------------------------
+DMMIXV:
+        jsr     DMPHI           ; step the frame-in-tick counter
+        jmp     DMDERIV
 
-; ---- DMLOC0: not in a match, so the console drives both cars ----
+; ---------------------------------------------------------------------------
+; DMMIXO -- the overscan call. Derives only.
+; ---------------------------------------------------------------------------
+DMMIXO:
+        ; fall through
+
+; ---------------------------------------------------------------------------
+; DMDERIV -- the synthetic controller, from whatever the clock decided.
+; ---------------------------------------------------------------------------
+DMDERIV:
+        lda     DMENT
+        and     #DME_NET
+        bne     DMNETIN
+
+DMLOCAL:
+; ---- not in a match, so the console drives both cars ----
 ;
 ; Straight through, with the hardware's own active-low sense intact. Nothing is
 ; normalised and nothing is decoded: the eight turn-decision sites each pick
@@ -34,6 +54,10 @@ DMMIX:
 ; long as what they read is a faithful SWCHA. Mixing in PORT space and letting
 ; the game's own `BIT $98` decide who is driving what is the whole reason the
 ; twenty-four patches are one-instruction swaps.
+;
+; THIS IS THE PLAIN PATH, and the networked one is in front of it rather than
+; around it. Combat's PORTING.md 4.13: a cartridge with no server is still a
+; Dodge 'Em cartridge, and `make det` depends on this path being ordinary.
         lda     SWCHA
         sta     DMSWA
         lda     SWCHB
@@ -43,3 +67,14 @@ DMMIX:
         lda     INPT5
         sta     DMTR5
         rts
+
+; ---- in a match: both consoles derive both cars from the two wire bytes ----
+;
+; Not written yet. When it is, it mixes the delayed local wire byte (DMLOC0-2) with the
+; peer's, in PORT space: the host's stick always in bits 7-4 and the guest's
+; always in bits 3-0, on both consoles. The roles are not baked into the
+; nibbles -- $98 bit 7 already swaps which port drives the dodger and which
+; the chaser, every round, and letting the game's own logic do that is what
+; keeps the twenty-four patches one-instruction swaps.
+DMNETIN:
+        jmp     DMLOCAL         ; until the transport lands, play it local

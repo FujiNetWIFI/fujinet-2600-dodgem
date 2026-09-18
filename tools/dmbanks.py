@@ -368,6 +368,7 @@ def main():
         # four from G3's, none from G1's.
         if any("DMMIX" in l for l in out):
             out.append("")
+            out.append('        INCLUDE "dmphi.inc"')
             out.append('        INCLUDE "dmmix.inc"')
         if any("DMPOKE" in l for l in out):
             out.append("")

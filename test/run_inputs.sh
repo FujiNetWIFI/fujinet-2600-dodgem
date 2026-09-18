@@ -60,11 +60,15 @@ allowed = []
 BANKS = [here + "/build/dm%s.lst" % b for b in ("g0", "g1", "g2", "g3", "boot")]
 for lst in [p for p in BANKS if glob.glob(p)]:
     txt = open(lst, errors="replace").read()
-    m = re.search(r'\bDMMIX :\s+([0-9A-F]{4})', txt)
+    # DMLOCAL, not DMMIXV: the reads all live in the one routine that touches
+    # the hardware, and anchoring on it is both tighter and self-updating. If
+    # a future networked path reads a port somewhere else in the shim, this
+    # gate flags it -- which is correct. A new reader deserves to be looked at.
+    m = re.search(r'\bDMLOCAL :\s+([0-9A-F]{4})', txt)
     if not m:
         continue
     base = int(m.group(1), 16)
-    allowed.append((base, base + 0x30, "DMMIX in " + lst.split("/")[-1]))
+    allowed.append((base, base + 0x20, "DMLOCAL in " + lst.split("/")[-1]))
 
 # The one deliberate live read: LF0F5, wherever it landed.
 for lst in [p for p in BANKS if glob.glob(p)]:
