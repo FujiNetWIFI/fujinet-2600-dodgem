@@ -444,3 +444,118 @@ in `NetworkProtocolTCP::dtor` — every time the rig sends it TERM. It happens
 after the measurement is complete and does not affect the numbers, and it
 reproduces with the stock distribution in `build/rig/fn1`, so it is recorded
 here rather than worked around.
+
+---
+
+## 8. The structural port, and what each gate cost to make honest
+
+M0 through M4a are done: the split build is byte-identical to the 1980
+cartridge over 3000 frames, its frames are the same length as stock's, it
+reads no console port, and both timed bands have room left.
+
+```
+make defs        53 equates agree with fuji_mailbox.h
+make verify-org  byte-identical (4096 bytes); the split is the one descent finds
+make zp          the census -- 121 cells used, 1 free, stack floor $FA
+make phase       four game banks, computed from the frame phases
+make anchors     74 declared sites, every one an instruction boundary
+make banks       every bank fits; 5 seams, 2 of them fall-through
+make probe       build/probe.bin -- 559 bytes, checkrom clean
+make dodgem      build/dodgem.bin -- 16384 bytes, checkrom clean
+make frames      900 frames, every one 262 lines, the same as stock
+make inputs      every console-port read comes from the shim
+make slack       neither band exhausted; worst frame leaves 10 ticks
+make det         3000 frames byte-identical, 2840 distinct states
+```
+
+### 8.1 The measurements the netcode is built on
+
+| | |
+|---|---|
+| transaction cost | 1 frame per step, **3 frames per round, 20.0 Hz** (§7) |
+| frame | 262 lines, **4.27 bank switches per frame** |
+| vblank band slack | mean 27.5 ticks, **worst 10**, never exhausted |
+| overscan band slack | mean 30.6 ticks, **worst 10**, never exhausted |
+| `DMGATE` | 8 ticks = 512 cycles of guaranteed headroom per step |
+
+A tick is `DMK = 4` frames, so 15 Hz against a 20 Hz transport: the transport
+has room, and a tick that misses is a stall rather than a permanent deficit.
+
+### 8.2 Three gates that passed on nothing first
+
+This is the section to read before writing the next one. Every one of these
+looked like a working gate.
+
+**`make inputs` passed with a patch deliberately removed.** Sixteen of the
+twenty-four read sites are the four turn-decision points, each behind
+`BIT $94 / BVC` — they execute only in the variation where a human drives the
+chase car, and attract does not run it. Even STOCK reads two of its
+twenty-four sites in attract. The gate now drives SELECT twice, RESET, and
+both sticks, and **asserts the state it reached**: `$94` must show `$Cx` and
+`$95` bit 7 must have been set. With that, the same removal produces a read
+from outside the shim — twice in 1800 frames, which is also a fair measure of
+how thin the coverage still is.
+
+**`make frames` printed nothing at all.** The harness came from a sibling
+ending in `add_machine_stop_notifier`, which never fires in this MAME. It
+measured everything correctly and emitted no output, and a gate whose output
+is empty cannot fail. `run_frames.sh` now treats a missing report as a failure.
+
+**`emu/latency.lua` reported nought rounds while 588 completed** (§7.1) — the
+cell addresses were hand-copied from a sibling and this port had moved them.
+The echo server's independent count on the far end of the socket is what
+turned a silent zero into a diagnosis.
+
+*The rule the three share:* **a harness and the thing it measures can disagree
+in silence, and the harness will report the quiet answer rather than an
+error.** Drive the code you are judging, assert you reached it, take addresses
+from the build, and treat no output as failure.
+
+### 8.3 What `det` found that nothing static could
+
+Four bugs, and three of them were the same mistake wearing different clothes:
+a table-relative address written as a literal.
+
+1. **The pointer HIGH bytes** — declared, and obvious once the tables moved.
+2. **The pointer LOW bytes** — `LDA #$94` is a literal that says nothing about
+   where the table is. Both halves are immediates and neither is wrong alone.
+3. **The comparisons that TEST those pointers** — `CMP #$CA` is the digit
+   table's end, `CMP #$8C` is where the crash animation's walk stops. The scan
+   that finds these looks for `LDA <pointer cell>` followed by `CMP #imm`;
+   every immediate in that shape is an address, not a number.
+4. **A pointer built by 16-bit ARITHMETIC** across four instructions, which a
+   sweep for `LDA #imm / STA zp` cannot see.
+
+And one that was structural rather than arithmetic: **duplicated tables at
+different addresses**. The digit pointers are built in G0 and dereferenced in
+G2. `tools/check_pins.py` is the generalisation — every label in the pinned
+span resolves to one address in every bank, checked in the symbol table before
+linking, because `det` can only find that class by running long enough to
+reach the event that follows the pointer. It took 291 frames to reach the
+first car crash.
+
+### 8.4 Where the two scanlines went
+
+The split build measured 264 lines against stock's 262, on every frame.
+`emu/seams.lua` records the scanline each bank switch lands on:
+
+```
+bank 1 at line   6.7     inside the vblank band      absorbed
+bank 2 at line  14.6     inside the vblank band      absorbed
+bank 3 at line 231.9     in front of $F424's WSYNC   absorbed
+bank 0 at line 263.3     after the overscan spin     NOT absorbed
+```
+
+Two fixes. `DMMIX` ran from each bank's entry dispatcher, which is *before*
+the band's timer is armed — so its cycles delayed the arm, delayed the spin,
+and lengthened the frame. Moved inside the band, the spin swallows it. That
+also needed `$F0F5`'s `SWCHB` read to go back to the live port, which is not a
+concession: black-and-white is a local preference and is not on the wire.
+
+The seam at 263.3 has no wait on its far side, so the overscan band is one
+tick shorter and the switch fits in the room that makes. It costs 64 cycles of
+slack in the band the netcode does not run in.
+
+*The rule:* **work added before a timed band lengthens the frame; the same
+work inside it is free.** Video Olympics §3.13 says it for work of varying
+length; it is just as true of work that is always the same size.

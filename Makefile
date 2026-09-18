@@ -23,7 +23,7 @@ DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 900
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs det ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack det ladder clean
 
 all: dodgem
 
@@ -135,7 +135,15 @@ frames: dodgem
 inputs: dodgem
 	test/run_inputs.sh $(FRAME_COUNT_IN)
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs det
+# ---------------------------------------------------------------- M4a
+# The band the netcode runs in has the room it assumes. Dodge 'Em arms TIM64T
+# twice a frame, so the harness tells the two bands apart by the VALUE armed
+# ($28 vblank, $23 overscan) rather than by reading a PC, which inside a tap
+# is not the instruction's anyway.
+slack: dodgem
+	test/run_slack.sh $(FRAME_COUNT_IN)
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack det
 
 defs:
 	./build.sh defs
