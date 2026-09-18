@@ -58,7 +58,7 @@ ENTRIES = {
 # The bank-local switch stubs the seam patches jump to. A branch cannot reach
 # another bank, but it can reach one of these.
 STUBS = {
-    "G0": [("DMTOG1", "BANKG1", 0, "into the dot engine"),
+    "G0": [("DMTOG1", "BANKG1", 0, "into the dot engine -- STALL-GATED, below"),
            ("DMTOG2", "BANKG2", 0, "into the kernel -- the fall-through at $F243")],
     "G1": [("DMTOG0R", "BANKG0", 1, "back to G0, resuming after the dot engine")],
     "G2": [("DMTOG3", "BANKG3", 0, "into the overscan band")],
@@ -213,6 +213,7 @@ def main():
         out.append("; ==== bank %s: %d regions, packed from $%04X ====" %
                    (bank, len(runs), WINDOW))
         out.append('        INCLUDE "fujinet.inc"')
+        out.append('        INCLUDE "cfg.inc"')
         out.append('        INCLUDE "dmdefs.inc"')
         out.append("")
         # Synthesise the pointer-target labels this bank can define.
@@ -289,6 +290,19 @@ def main():
 
         # ---- the bank-local switch stubs ----
         for name, bk, ent, why in STUBS.get(bank, []):
+            if name == "DMTOG1":
+                # The vblank chain's stall gate, folded into the switch it
+                # already needed. A stalled frame skips the dot engine and
+                # resumes where the JSR would have returned.
+                out.append("DMTOG1: lda     DMADV")
+                out.append("        bne     DMTOG1G")
+                out.append("        jmp     LF22B           ; stalled: no dots,")
+                out.append("                                ;   no scoring")
+                out.append("DMTOG1G: lda    #%s" % bk)
+                out.append("        ldy     #%d" % ent)
+                out.append("        jmp     DMGOTO")
+                cursor += 15
+                continue
             out.append("%s: lda     #%s           ; %s" % (name, bk, why))
             out.append("        ldy     #%d" % ent)
             out.append("        jmp     DMGOTO")
@@ -366,6 +380,15 @@ def main():
         # is entered from G0 inside the vblank band, after the fill has already
         # run. make inputs is what showed that -- four reads from G0's copy,
         # four from G3's, none from G1's.
+        # The overscan stall gate goes only in the bank that HAS the overscan
+        # chain: it jumps to LF4C6+2 and LF4EA, which exist nowhere else. The
+        # vblank chain's gate is folded into DMTOG1 in G0 instead, so the two
+        # live in different banks and neither is carried where it would not
+        # resolve.
+        if any(lo <= 0xF4C6 <= hi for lo, hi in runs):
+            out.append("")
+            out.append('        INCLUDE "dmgate.inc"')
+
         if any("DMMIX" in l for l in out):
             out.append("")
             out.append('        INCLUDE "dmphi.inc"')

@@ -20,10 +20,10 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 DET_FRAMES    ?= 3000
-FRAME_COUNT   ?= 900
+FRAME_COUNT   ?= 1500
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack det sim lobby ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby ladder clean
 
 all: dodgem
 
@@ -156,7 +156,15 @@ sim:
 lobby:
 	python3 tools/test_lobby_pub.py
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack det sim lobby
+# ---------------------------------------------------------------- M4
+# A stalled frame stalls the SIMULATION and not the PICTURE. Built twice --
+# once normally, once with DMSTALLT=1, which stalls every other tick with no
+# network involved -- so this measures the mechanism the transport will rest
+# on rather than the transport.
+stall: dodgem
+	test/run_stall.sh $(FRAME_COUNT_IN)
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby
 
 defs:
 	./build.sh defs

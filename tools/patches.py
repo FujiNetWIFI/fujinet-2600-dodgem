@@ -194,6 +194,20 @@ POINTER_LOWS = [
 ]
 
 # ---------------------------------------------------------------------------
+# M4: the stall gate.
+#
+# A stall is a frame drawn normally with the game-logic chain skipped. Dodge
+# 'Em advances its simulation in two places, so there are two gates: the dot
+# engine in vblank (folded into DMTOG1, which is already a bank switch) and the
+# movement chain in overscan, here.
+#
+# $F4C6's `LDA $81` is displaced rather than duplicated, so the flags $F4C8
+# consumes are the ones it always had.
+GATES = [
+    (0xF4C6, "A5 81", "jmp     DMOVGATE", "overscan: the movement chain"),
+]
+
+# ---------------------------------------------------------------------------
 # M0c: the evicted blocks.
 #
 # $AC-$B4 (the per-row dot bitmap) and $BC-$C2 (player B's saved state) move
@@ -315,4 +329,4 @@ INSERTS = [
 
 ALL = [("INPUTS", INPUTS), ("POINTERS", POINTERS),
        ("POINTER_LOWS", POINTER_LOWS), ("EVICTED", EVICTED), ("SEAMS", SEAMS),
-       ("TIMERS", TIMERS)]
+       ("TIMERS", TIMERS), ("GATES", GATES)]

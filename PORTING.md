@@ -559,3 +559,66 @@ slack in the band the netcode does not run in.
 *The rule:* **work added before a timed band lengthens the frame; the same
 work inside it is free.** Video Olympics §3.13 says it for work of varying
 length; it is just as true of work that is always the same size.
+
+---
+
+## 9. The stall, and a gate that was measuring the attract screen
+
+### 9.1 The primitive, proved before anything rests on it
+
+A stall is a frame drawn normally with the game-logic chain skipped. Dodge 'Em
+advances its simulation in two places, so there are two gates:
+
+```
+$F228  JSR LF859   the dot-and-scoring engine, in vblank -- folded into
+                   DMTOG1, the bank switch that seam already needed
+$F4C6  the movement chain, in overscan: LF5BF turns the cars, LF5A0 swaps
+       the players' saved blocks, and $F4E0-$F4E9 step the frame counters
+```
+
+**The counters are inside the gate**, not outside it. Video Olympics §3.16 is
+the rule: everything left ungated becomes a function of the local stall
+pattern, and the stall pattern is the one thing two consoles differ in by
+design, because absorbing it is what lockstep is *for*.
+
+`DMADV` defaults to "advance" every frame and the gate clears it. That
+direction is load-bearing: `DMADV` lives at `$C0`, which the cold clear sweeps
+to zero along with the rest of the page, so a gate that only ever *cleared* it
+would leave the console stalled from power-on — drawing a perfect still
+picture of a game that never starts.
+
+`make stall` builds the image twice, once with `DMSTALLT=1`, which stalls every
+other tick with no network involved. It measures the mechanism rather than the
+transport, and requires both halves:
+
+```
+the simulation advanced on 99.9% of frames normally, 69.2% when stalling
+the picture: 261:1633 262:173 -- identical in both
+```
+
+### 9.2 `make frames` was measuring the attract screen
+
+This is the third gate in this port to pass on the wrong workload, and it is
+worth recording because it looked *more* convincing than the truth.
+
+Measured in attract, Dodge 'Em runs a flat 262 lines and the gate asserted
+"every frame the same length, and that length is stock's". Driven into a real
+match it runs **261 and 262 mixed** — because the game itself varies, and
+stock varies identically:
+
+```
+stock, driven:  LINES 261:1327 262:173
+split, driven:  LINES 261:1327 262:173
+```
+
+So the flat 262 was a fact about the attract screen, and the assertion built on
+it would have been satisfied by any build that also idled. The gate now
+compares **the whole distribution** against stock's, which catches a frame the
+netcode lengthened *and* one it shortened, without needing to know which
+lengths the game is entitled to. Reverting the overscan timer patch shifts the
+entire distribution up by one line and the gate says so.
+
+*The rule, now three times over:* **drive the code you are judging, and assert
+you reached it.** `make inputs` saw nine of twenty-four sites, `make frames`
+measured an idle screen, `emu/latency.lua` tapped cells that had moved. Each
+reported a clean, quiet, wrong answer.

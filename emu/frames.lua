@@ -19,7 +19,34 @@ local SECS = tonumber(os.getenv("SECS") or "20")
 local FRAME = 1 / 59.92
 local LINE  = FRAME / 262          -- a scanline is a scanline whatever the frame
 
+-- IT DRIVES THE GAME, for the same reason make inputs must.
+--
+-- Measured in ATTRACT this reported a clean 262 lines on every frame. Driven
+-- into a real match it reports 261 and 262 mixed -- because the game itself
+-- varies, as stock does identically. An attract screen is not the workload,
+-- and a gate that measures the wrong workload agrees with itself perfectly.
 local sp = manager.machine.devices[":maincpu"].spaces["program"]
+local FLD = {}
+for k, t in pairs({ select = { ":SWB", "Select Game" }, reset = { ":SWB", "Reset Game" },
+                    p1u = { ":joyport1:joy:JOY", "P1 Up" },
+                    p1d = { ":joyport1:joy:JOY", "P1 Down" },
+                    p2u = { ":joyport2:joy:JOY", "P2 Up" },
+                    p2d = { ":joyport2:joy:JOY", "P2 Down" } }) do
+    local p = manager.machine.ioport.ports[t[1]]
+    FLD[k] = p and p.fields[t[2]] or false
+end
+local function press(k, on) if FLD[k] then FLD[k]:set_value(on and 1 or 0) end end
+local dframe = 0
+_G._fr_drive = emu.add_machine_frame_notifier(function()
+    dframe = dframe + 1
+    press("select", (dframe > 60 and dframe < 70) or (dframe > 110 and dframe < 120))
+    press("reset", dframe > 170 and dframe < 180)
+    if dframe > 200 then
+        local ph = math.floor(dframe / 17) % 2
+        press("p1u", ph == 0); press("p1d", ph == 1)
+        press("p2d", ph == 0); press("p2u", ph == 1)
+    end
+end)
 local hist, n, last = {}, 0, nil
 local badat = {}
 local banks, bankseq = {}, {}

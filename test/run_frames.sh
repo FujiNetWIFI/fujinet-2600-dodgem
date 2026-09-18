@@ -22,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HERE=$(pwd)
-FRAMES=${1:-${FRAME_COUNT:-900}}
+FRAMES=${1:-${FRAME_COUNT:-1500}}
 MAME=${MAME:-$HOME/Workspace/mame}
 SECS=$(( FRAMES / 60 + 8 ))
 
@@ -37,25 +37,37 @@ run() {  # run <slot> <image> <out>
     ) > "$HERE/build/$3"
 }
 
-mode_of() { grep -m1 "^FRAMES " "$1" | sed 's/.*mode \([0-9]*\) lines.*/\1/'; }
-odd_of()  { grep -m1 "^FRAMES " "$1" | sed 's/.*, \([0-9]*\) not the mode/\1/'; }
-
-echo "== stock =="; run a26_2k_4k stock.bin frames_stock.txt
+echo "== stock ==" ; run a26_2k_4k stock.bin frames_stock.txt
 grep -E "^LINES|^FRAMES " build/frames_stock.txt || true
-echo "== split =="; run fujinet dodgem.bin frames_split.txt
+echo "== split ==" ; run fujinet dodgem.bin frames_split.txt
 grep -E "^LINES|^FRAMES |^BANK" build/frames_split.txt || true
 
 for f in frames_stock frames_split; do
-    grep -q "^FRAMES " "build/$f.txt" || {
+    grep -q "^LINES " "build/$f.txt" || {
         echo "frames: $f produced no report -- the harness measured nothing." \
              "That is a failure, not a pass." >&2; exit 1; }
 done
 
-sm=$(mode_of build/frames_stock.txt); so=$(odd_of build/frames_stock.txt)
-dm=$(mode_of build/frames_split.txt); do_=$(odd_of build/frames_split.txt)
-
+# COMPARE THE WHOLE DISTRIBUTION, not the mode.
+#
+# Measured in attract this game runs a flat 262 lines and an equality test on
+# the mode was enough. Driven into a real match it runs 261 and 262 mixed --
+# because DODGE 'EM ITSELF varies, and stock varies identically. Asserting
+# "every frame the same length" would have been asserting something about the
+# attract screen.
+#
+# So the claim is the honest one: the split build's frame-length distribution
+# is the same as stock's, line for line. That catches a frame the netcode
+# lengthened AND a frame it shortened, without needing to know which lengths
+# the game is entitled to.
+ls=$(grep -m1 "^LINES " build/frames_stock.txt)
+ld=$(grep -m1 "^LINES " build/frames_split.txt)
 echo
-[ "$so" = "0" ] || { echo "frames: FAIL -- stock itself has $so odd frames" >&2; exit 1; }
-[ "$do_" = "0" ] || { echo "frames: FAIL -- the split build has $do_ frames that are not $dm lines" >&2; exit 1; }
-[ "$sm" = "$dm" ] || { echo "frames: FAIL -- stock measures $sm lines, the split build $dm" >&2; exit 1; }
-echo "frames: PASS -- $FRAMES frames, every one $dm lines, the same as stock"
+if [ "$ls" != "$ld" ]; then
+    echo "frames: FAIL -- the distributions differ" >&2
+    echo "  stock: $ls" >&2
+    echo "  split: $ld" >&2
+    exit 1
+fi
+echo "frames: PASS -- $FRAMES frames, distribution identical to stock"
+echo "frames:        $ld"

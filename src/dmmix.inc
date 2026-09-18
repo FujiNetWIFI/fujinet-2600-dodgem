@@ -28,6 +28,37 @@
 ; ---------------------------------------------------------------------------
 DMMIXV:
         jsr     DMPHI           ; step the frame-in-tick counter
+
+; THE SIM ADVANCES UNLESS SOMETHING SAYS OTHERWISE, and the default matters
+; more than it looks. DMADV lives in $C0, which the cold clear sweeps to zero
+; along with the rest of the page -- so a gate that only ever CLEARS this cell
+; would leave the console stalled forever from power-on, drawing a perfect
+; still picture of a game that never starts. Set it every frame; let the
+; lockstep gate clear it.
+        lda     #$FF
+        sta     DMADV
+
+        IF      DMSTALLT
+; THE INTERCEPTION PROOF (`make stall`). Built only when asked for.
+;
+; The stall is the primitive the whole transport rests on -- a console waits
+; for a peer by drawing a frame with the logic chain skipped -- and an untested
+; primitive under a transport is a bug with somewhere to hide. So this build
+; stalls every other TICK, unconditionally and with no network involved, and
+; emu/stall.lua requires the simulation to advance at half speed while the
+; picture keeps its 262 lines.
+;
+; It gates on the tick phase rather than the frame counter so that a stall
+; covers a whole tick: stalling one frame in eight would be absorbed by the
+; other three frames of the tick and prove nothing.
+        lda     DMENT
+        and     #$80            ; bit 7 of the phase: alternate ticks
+        beq     DMSTNO
+        lda     #0
+        sta     DMADV
+DMSTNO:
+        ENDIF
+
         jmp     DMDERIV
 
 ; ---------------------------------------------------------------------------
