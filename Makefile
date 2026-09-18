@@ -18,12 +18,12 @@
 SHELL := /bin/bash
 FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
-SECS          ?= 30
+SECS          ?= 40
 DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 1500
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby session ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby session rig rig-hold ladder clean
 
 all: dodgem
 
@@ -172,7 +172,23 @@ stall: dodgem
 session: dodgem
 	SECS=$(SECS) test/run_sess.sh
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session
+# ---------------------------------------------------------------- M6
+# Two consoles, two fujinet-pc, one relay, one match. The first gate that
+# exercises the transport and the mixer at all -- everything below it proves
+# the un-networked path is untouched and that one console reaches a relay.
+#
+# The verdict is inline and it asserts more than agreement: two machines that
+# agree about nothing agree perfectly (Combat 4.18), so it also requires both
+# to have REACHED the snapshot tick and to have run hundreds of them.
+rig: dodgem
+	SECS=$(SECS) test/run_rig.sh
+
+# ...with SELECT held down for the whole run: the variation must walk
+# identically on both consoles, which it can only do if it is on the wire.
+rig-hold: dodgem
+	SECS=$(SECS) RIG_HOLD=select test/run_rig.sh
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig
 
 defs:
 	./build.sh defs

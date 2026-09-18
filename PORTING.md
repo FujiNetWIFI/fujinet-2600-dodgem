@@ -713,3 +713,67 @@ addresses generated from the assembler by `tools/mksyms.py` — for the reason
 §7.1 gives. It also taps the path port directly, because
 `pathchars=0 pathops=4 pathlen=0` is a diagnosis and "the relay saw nothing"
 is not.
+
+---
+
+## 11. Two consoles, one match
+
+```
+match: PLAYER1 (host) vs PLAYER2, seed $5535, delay 2, variation 3
+   0 CRC MISMATCH lines
+  ok   the relay paired the two consoles
+  ok   both consoles snapshotted the same tick
+  ok   the two consoles agree byte for byte at the snapshot tick
+  ok   the two consoles are on the SAME game variation
+  ok   console 1 ran 793 ticks       ok   console 2 ran 805 ticks
+  ok   no transport error ($00) on either
+
+RIG PASS
+```
+
+This is the first gate that exercises the transport and the mixer at all.
+Everything below it proves the un-networked path is untouched and that one
+console reaches a relay; nothing below it has two machines agreeing about a
+tick.
+
+The verdict asserts more than agreement, because two machines that agree about
+nothing agree perfectly (Combat §4.18). It requires both to have **reached**
+the snapshot tick and to have run hundreds of them — and the run before it, the
+one that failed, is the illustration: `the two consoles never disagreed` passed
+while every other line said FAIL, because neither console had started.
+
+### 11.1 Three harness bugs, and the third was mine twice over
+
+The rig failed three times before it ran, and none of the failures was in the
+ROM.
+
+**The harness had the sibling's cell addresses**, and a rename had turned the
+comment above them into a claim that they were Dodge 'Em's. Every one was
+Tennis's. `tools/mksyms.py` generates them from the assembler now, as it does
+for `latency.lua` and `sess.lua` — §7.1's rule, arrived at for the third time.
+
+**`DMSYMS` was a relative path.** MAME must run from its own tree or
+`-autoboot_script` is silently ignored, so it resolved against MAME's
+directory. The Lua error killed the tap, which reads as a console that never
+reached the snapshot, which reads as a desync.
+
+**And the fix for that broke the script.** The comment explaining it went
+*inside* a continued command:
+
+```sh
+    PLAY_INJECT="..." \
+    # DMSYMS ABSOLUTE. ...        <- ends the continuation
+    SECS="$SECS" ... \
+```
+
+A comment after a `\` ends the continuation, the environment assignments become
+a command of their own, and the script exits without running either console.
+Which also reads as a desync. The comment is above the loop now, and it says
+so.
+
+*The rule this port keeps re-deriving, now from a fourth direction:* **a
+harness that fails silently is indistinguishable from the bug it was built to
+find.** Three of this port's gates have passed on nothing, and three of its
+harnesses have failed on something that worked. The defence is the same either
+way: generate what can be generated, assert what was reached, and make silence
+fatal.

@@ -360,7 +360,8 @@ rm -f build/dmtail.p
 # than written down: emu/latency.lua once tapped three cells this port had
 # moved and reported nought rounds while 588 completed.
 python3 tools/mksyms.py build/dmg0.lst build/dmsyms.lua \
-    DMENT DMERR DMTICK DMNST DMRWAT DMCRCV DMADV DMLOC0 DMRIN0
+    DMENT DMERR DMTICK DMNST DMRWAT DMCRCV DMADV DMLOC0 DMRIN0 \
+    DMSWA DMSWB DMTR4 DMTR5
 
 python3 tools/dmstack.py build/dmg0.lst build/dmg1.lst build/dmg2.lst \
     build/dmg3.lst build/dmboot.lst
