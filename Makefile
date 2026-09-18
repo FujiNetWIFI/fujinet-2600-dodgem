@@ -19,8 +19,9 @@ SHELL := /bin/bash
 FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
+DET_FRAMES    ?= 3000
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem det ladder clean
 
 all: dodgem
 
@@ -103,7 +104,18 @@ banks: phase
 dodgem:
 	./build.sh
 
-ladder: defs verify-org zp phase anchors banks probe dodgem
+# ---------------------------------------------------------------- M2b
+# The split build plays EXACTLY like the 1980 cartridge. Per-frame checksums
+# of the sim state, compared -- and required to change, because a gate that
+# only measures agreement will pass two machines agreeing about nothing.
+#
+# It samples on CXCLR, which Dodge 'Em strobes once a frame at $F249, not on
+# MAME's frame notifier: the notifier fires at a fixed point in emulated TIME
+# and two builds are not at the same point in their frame when it does.
+det: dodgem
+	test/run_det.sh $(DET_FRAMES)
+
+ladder: defs verify-org zp phase anchors banks probe dodgem det
 
 defs:
 	./build.sh defs

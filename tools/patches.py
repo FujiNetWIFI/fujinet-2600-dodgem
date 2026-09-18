@@ -177,6 +177,21 @@ POINTER_LOWS = [
     # frames in, when the first car crashed.
     (0xF463, "A9 6C", "lda     #(LFE6C)&$FF", "crash animation, low half"),
     (0xF46E, "69 FE", "adc     #(LFE6C)>>8",  "crash animation, high half"),
+
+    # ...and the loop's TERMINATION TEST, which is the same constant in a
+    # third disguise:
+    #
+    #     $F465  CLC / ADC #$08 / STA $A0 / STA $A7   ; step the animation
+    #     $F49C  LDA $A0 / CMP #$8C / BNE $F465       ; four frames of it
+    #
+    # $8C is LFE6C+32 -- where the walk stops -- written as a constant. With
+    # the base relocated and the test left alone the comparison simply never
+    # matched, so the crash animation ran past its end, and the `DEC $96`
+    # inside the loop took the sound counter with it.
+    #
+    # One patch, six diverging cells: $96, $9B, $A0, $A2, $A4 and $A7 all came
+    # back together.
+    (0xF49E, "C9 8C", "cmp     #(LFE6C+32)&$FF", "crash animation, end of walk"),
 ]
 
 # ---------------------------------------------------------------------------
