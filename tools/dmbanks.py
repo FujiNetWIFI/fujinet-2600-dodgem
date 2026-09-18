@@ -52,7 +52,8 @@ ENTRIES = {
     "G1": [(0xF859, "the dot engine")],
     "G2": [(0xF244, "the vblank spin, then the picture")],
     "G3": [(0xF420, "the overscan band"),
-           (0xF0CA, "the cold path")],
+           (0xF0CA, "the cold path, clear and all"),
+           (0xF0D6, "the cold path PAST the clear -- see DMEN_NET")],
 }
 
 # The bank-local switch stubs the seam patches jump to. A branch cannot reach
@@ -272,19 +273,39 @@ def main():
         ents = ENTRIES[bank]
         out.append("        ORG     $%04X" % WINDOW)
         out.append("; bank entry. DMGOTO leaves the entry index in Y.")
+        # An entry address need not be a label: DiStella names branch targets
+        # and nothing else, and DMEN_NET points into the middle of the cold
+        # path, five bytes past LF0D1. Anchor it on the nearest preceding label
+        # the same way the pointer targets are -- an expression the assembler
+        # can evaluate beats a synthesised label that could collide.
+        def entry_ref(t):
+            if ("L%04X" % t) in real_labels:
+                return "L%04X" % t
+            best = None
+            for n in sorted(addrs):
+                a, _ = addrs[n]
+                if a <= t and any(lo <= a <= hi for lo, hi in eff_runs):
+                    lab = label_of(src[n - 1])
+                    if lab:
+                        best = (lab, t - a)
+            if best is None:
+                sys.exit("dmbanks: bank %s is entered at $%04X but has no "
+                         "label before it to anchor on" % (bank, t))
+            return "%s+%d" % best if best[1] else best[0]
+
         dispatch = []
         if len(ents) == 1:
-            dispatch.append("        jmp     L%04X           ; %s"
-                            % (ents[0][0], ents[0][1]))
+            dispatch.append("        jmp     %-15s ; %s"
+                            % (entry_ref(ents[0][0]), ents[0][1]))
         else:
             for i, (tgt, why) in enumerate(ents[1:], 1):
                 dispatch.append("        cpy     #%d" % i)
                 dispatch.append("        beq     DMEN%d" % i)
-            dispatch.append("        jmp     L%04X           ; entry 0: %s"
-                            % (ents[0][0], ents[0][1]))
+            dispatch.append("        jmp     %-15s ; entry 0: %s"
+                            % (entry_ref(ents[0][0]), ents[0][1]))
             for i, (tgt, why) in enumerate(ents[1:], 1):
-                dispatch.append("DMEN%d:  jmp     L%04X           ; entry %d: %s"
-                                % (i, tgt, i, why))
+                dispatch.append("DMEN%d:  jmp     %-15s ; entry %d: %s"
+                                % (i, entry_ref(tgt), i, why))
         if any(lo <= 0xF244 <= hi for lo, hi in runs):
             # In front of the spin, not after it (Tennis 2.2): everything the
             # loop does not use is waited out by code that was going to wait.

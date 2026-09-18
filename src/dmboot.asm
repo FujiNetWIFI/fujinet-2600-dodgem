@@ -14,7 +14,9 @@
         CPU     6502
         INCLUDE "vcs.inc"
         INCLUDE "fujinet.inc"
+        INCLUDE "cfg.inc"
         INCLUDE "dmdefs.inc"
+        INCLUDE "tail.inc"
 
         ORG     $1000
 
@@ -47,10 +49,13 @@ DMSEED: jsr     DMPOKEB
 ; DMENT was zeroed by DMCOLD, so the game starts un-networked: no DME_NET, no
 ; role, no tick. Nothing here may write DMENT's other bits before the session
 ; exists, because a half-set flag is worse than a clear one.
-        lda     #BANKG3
-        ldy     #DMEN_CLD
-        jmp     DMGOTO
+        jmp     DMBENT          ; the session; every failure in it lands at
+                                ;   DMSLOC, which hands over un-networked
 
         INCLUDE "dmpoke.inc"
+        INCLUDE "dmappk.inc"
+        INCLUDE "dmsess.inc"
+        INCLUDE "playername.inc"
+        INCLUDE "endpoint.inc"
 
         END

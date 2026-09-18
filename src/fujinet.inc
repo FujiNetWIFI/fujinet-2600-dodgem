@@ -107,6 +107,9 @@ FH_BDL  EQU     $F7             ; destination, low (a text ROW for TEXT/PATH)
 FH_BDH  EQU     $F8             ; ...high
 FH_BCNT EQU     $F9             ; count
 FH_BGO  EQU     $FA             ; data = the transform; fire
+FNPLEN  EQU     $1F17           ; the active path buffer's length, 2 bytes LE,
+                                ;   republished on every change. The direct
+                                ;   answer to "did the devicespec get built".
 FNBGEN  EQU     $1F19           ; bumped after a blit has actually LANDED.
                                 ;   There is no queue: a second blit fired
                                 ;   before the first has run loses the first

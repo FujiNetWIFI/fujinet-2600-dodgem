@@ -622,3 +622,94 @@ entire distribution up by one line and the gate says so.
 you reached it.** `make inputs` saw nine of twenty-four sites, `make frames`
 measured an idle screen, `emu/latency.lua` tapped cells that had moved. Each
 reported a clean, quiet, wrong answer.
+
+---
+
+## 10. The session, and four failures that all looked like silence
+
+`make session` brings up one console, one `fujinet-pc` and a real relay, and
+requires the relay to name the console:
+
+```
+127.0.0.1:51264 connected
+127.0.0.1 is DODGEM (NTSC)
+session: PASS
+```
+
+One console cannot pair — that takes two — so what this proves is the appkey
+read, the fallback, the path buffer, the `N:` open and the handshake. It
+separates "the socket works" from "two consoles agree", and the second is much
+more expensive to debug.
+
+Getting there cost four rounds, and every one of them presented as the same
+thing: the relay log saying nothing at all.
+
+### 10.1 The cold clear ate the session
+
+The session spends a socket and a handshake filling the netcode's cells and
+then hands the console to the game — at `$F0CA`, whose first act is
+`LDX #$FF / TXS / INX / TXA / STA VSYNC,X / INX / BNE`, a sweep of `$00-$FF`
+that clears the TIA and every byte of RAM. The harness reported
+`ent=00 err=00 tick=00 nst=00`, which is exactly what a wiped netcode looks
+like from the outside and is indistinguishable from one that never ran.
+
+The answer is not to bound the game's clear — it is stock code and `det`
+depends on it. It is to not run it on the path that has something to lose. The
+boot bank does a **bounded** clear of its own (the TIA, and the game's cells,
+and not the netcode's) and a networked handover enters G3 at a **second cold
+entry past the sweep**. The un-networked path still goes through `$F0CA`
+exactly as the cartridge does, which is what keeps `make det` meaningful.
+
+### 10.2 A one-shot hotspot is not an arm-and-commit pair
+
+`FH_PATHO` and `FH_PATHC` are in the bit-7-set half of the control page, which
+is the ONE-SHOT half: the data comes from the store itself. The arm-then-commit
+pair belongs to the registers below `$80`. Writing
+
+```asm
+        lda     #FP_SEL0
+        sta     FNRSEL+FH_PATHO
+        sta     FNCMT           ; <- wrong: commits whatever was armed last
+```
+
+is not a no-op with a wasted cycle. fujinet-pc logged `rs232_open()` and then
+`ERROR: deviceSpec is empty`, and the relay never saw a connection.
+
+### 10.3 "A = 0 on success" was true and useless
+
+`CSAKGET` documents itself as returning zero on success, and on an appkey that
+does not exist it returned zero anyway: fujinet-pc logs `fopen … err` and the
+console sees a perfectly ordinary empty reply. The fallback to the build-time
+endpoint never ran, and the devicespec stayed empty.
+
+The fix is not a better convention. **The cartridge publishes the active path
+buffer's length at `$1F17` and republishes it on every change**, so "is there a
+devicespec" is a fact to be read rather than a return value to be trusted:
+
+```asm
+        jsr     CSAKGET
+        lda     FNPLEN
+        ora     FNPLEN+1
+        bne     DMB2            ; something is in the buffer, whatever said so
+        jsr     DMFALLB
+```
+
+### 10.4 The gate was grepping for the wrong evidence
+
+With all three fixed, the console opened a socket, sent twelve bytes, and was
+named — and `make session` still reported FAIL, because it grepped the relay
+log for the word `HELLO`. The relay does not log the message name. It logs the
+**result** of one: `is DODGEM (NTSC)`.
+
+*The rule, and it is the same one as §8.2 from the other end:* **grep for the
+evidence, not for the message.** A gate that looks for the name of a thing
+rather than the trace it leaves will fail on a system that is working, and the
+three real bugs above were found while chasing it.
+
+### 10.5 What the harness reads
+
+`emu/sess.lua` reads the netcode's own cells rather than the screen, with the
+addresses generated from the assembler by `tools/mksyms.py` — for the reason
+§7.1 gives. It also taps the path port directly, because
+`pathchars=0 pathops=4 pathlen=0` is a diagnosis and "the relay saw nothing"
+is not.

@@ -141,6 +141,15 @@ FNCMD   EQU     DMRIN1
 FNNPR   EQU     DMRIN2
 FNTMO   EQU     DMLOC0          ; timeout in ~0.6s quanta
 FNCNT   EQU     DMLOC1          ; timeout quanta remaining
+
+; The appkey reader's two. They must NOT alias FNDEV/FNCMD/FNNPR, because they
+; have to survive FNBEG, which writes all three -- so they take the far end of
+; the local window instead. Safe for the same reason as the rest of the union
+; and one more: the session FILLS DMLOC0-2 with IDLE as its very last act,
+; after every appkey has been read.
+CSDLY   EQU     DMLOC2          ; the key number, parked where FNBEG cannot
+                                ;   reach it
+FNPCNT  EQU     DMADV           ; which cartridge path buffer is being filled
 FNSEQ   EQU     DMSEQ           ; not a union: the sequence IS the same
                                 ;   quantity in both phases
 
@@ -214,6 +223,8 @@ IW_IDLE EQU     $FF
 IR_SEED EQU     $A5             ; salts the XOR check byte over a record
 ; Frame types, matching server/dodgem_relay_server.py. Only these two can
 ; arrive during play; everything else belongs to the session.
+WT_HELLO EQU    $01
+WT_START EQU    $05
 WT_INPUT EQU    $06
 WT_LEFT EQU     $0B             ; the peer left
 IR_MASK EQU     $F8             ; whole records only -- see dmnet.inc's note on
@@ -261,6 +272,15 @@ DMAPPKEY EQU    27              ; Combat 24, Video Olympics 24, Dragster 25,
                                 ;   is shared by every game in the family.
 DMPORT  EQU     9603
 
+; The HELLO payload: type + version + television + the name.
+DMNLEN  EQU     8
+DMHLEN  EQU     4+DMNLEN
+
+; The role the relay handed us, kept only until DMENT is built from it. It may
+; share with the record cursor: DMSTART has finished with one before the other
+; exists, and both belong to the boot bank.
+DMROLE  EQU     DMRDN
+
 ; ---------------- the banks, and the seams between them ----------------
 ;
 ; Four game banks, carved by frame PHASE rather than by address -- see
@@ -281,7 +301,21 @@ BANKBOOT EQU    4               ; cold start, session, text screens
 DMEN_TOP EQU    0               ; G0: the top of the frame ($F0E4)
 DMEN_DOT EQU    1               ; G0: resume after the dot engine ($F22B)
 DMEN_OVR EQU    0               ; G3: the overscan band ($F420)
-DMEN_CLD EQU    1               ; G3: the cold path ($F0CA)
+DMEN_CLD EQU    1               ; G3: the cold path ($F0CA), clear and all
+DMEN_NET EQU    2               ; G3: the cold path PAST the clear ($F0D6)
+;
+; Two cold entries, because $F0CA's first act is `LDX #$FF / TXS / INX / TXA /
+; STA VSYNC,X / INX / BNE` -- a sweep of $00-$FF that clears the TIA and every
+; byte of RAM, the netcode's included. The session spends a socket and a
+; handshake filling those cells and the clear wipes all of it; the first run of
+; this gate reported ent=00 err=00 tick=00 nst=00, which is what a wiped
+; netcode looks like from the outside.
+;
+; So a networked handover enters PAST the clear, and the boot bank does a
+; BOUNDED one of its own first. Combat's PORTING.md 4.12 and its siblings are
+; all about this clear in one form or another; here the answer is not to bound
+; the game's clear -- it is stock code and det depends on it -- but to not run
+; it on the path that has something to lose.
 
 ; DMGOTO's address is fixed HERE and dmtail.asm ORGs to it, so the two cannot
 ; drift apart. It must be first in the tail: it is the one address every bank

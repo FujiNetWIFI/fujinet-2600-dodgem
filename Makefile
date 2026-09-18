@@ -23,7 +23,7 @@ DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 1500
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby session ladder clean
 
 all: dodgem
 
@@ -164,7 +164,15 @@ lobby:
 stall: dodgem
 	test/run_stall.sh $(FRAME_COUNT_IN)
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby
+# ---------------------------------------------------------------- M5
+# One console, a real socket, a real HELLO. It cannot pair -- that takes two --
+# so what it proves is that the appkey fallback, the path buffer, the N: open
+# and the handshake all work, which separates "the socket works" from "two
+# consoles agree" and makes the second much cheaper to debug.
+session: dodgem
+	SECS=$(SECS) test/run_sess.sh
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session
 
 defs:
 	./build.sh defs
