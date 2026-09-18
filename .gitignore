@@ -1,0 +1,5 @@
+build/
+__pycache__/
+*.pyc
+rom/dodgem.bin
+rom/dodgem.asm
