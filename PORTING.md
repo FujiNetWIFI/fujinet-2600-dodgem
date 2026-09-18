@@ -777,3 +777,122 @@ find.** Three of this port's gates have passed on nothing, and three of its
 harnesses have failed on something that worked. The defence is the same either
 way: generate what can be generated, assert what was reached, and make silence
 fatal.
+
+---
+
+## 12. The repair, and three injection targets that could not work
+
+```
+  ok   the relay saw the injected disagreement (73 line(s))
+  ..   mismatches span ticks 62-69; the match ran 1352 ticks
+  ok   the mismatches STOPPED, and the match ran on for 1283 more ticks
+REPAIR PASS
+```
+
+This gate asserts the **opposite** of every other one. Console 1 is built to
+corrupt its own checksum for eight ticks, so mismatches are the point and
+silence would mean the injection missed — and what has to be true is that they
+*stopped*.
+
+`dmnet.inc` arms `DME_RSY` when a record's checksum for a tick this console has
+also sampled disagrees with `DMCRCV`; `dmcap.inc` acts on it by clearing
+`IW_RST` in this console's own wire byte. A synthetic RESET, ANDed with the
+peer's and delivered through the delay ring, so **both machines act on it at
+the same tick**. Dodge 'Em's own RESET path re-seeds every cell the simulation
+has (`LFC41`, `LF032`, `LF506`), which is a better repair than anything
+eight-byte records could push across.
+
+### 12.1 Why the corruption is of the CHECKSUM and not of the state
+
+Three attempts were made at corrupting the simulation first, and all three
+failed the same way:
+
+| cell | why it looked right | why it is not |
+|---|---|---|
+| `$98` | called the score, in `DMCRC` | its low bits are a DIGIT-POINTER WALK — `LFB7C` steps them down by six and resets at `$0B` |
+| `$B5` | player A's saved block, in `DMCRC` | `LF09F` rewrites it from a ROM constant every round start |
+| car positions | the obvious pick | driven from the stick and the track every tick (Video Olympics §3.18 says so) |
+
+The pattern is not bad luck. **Every cell `DMCRC` covers is one the game
+rewrites within a tick** — which is exactly why those cells are worth
+checksumming, and exactly why a corruption in one is gone before the next
+boundary samples it. The middle attempt is the instructive one: it produced a
+visible six-tick divergence in the state dumps and **zero** CRC mismatches at
+the relay, because the game had overwritten it before `DMCRC` ever ran over it.
+A gate built on that would have reported a repair that never happened.
+
+The one cell that would have held still is the per-row dot bitmap — nothing
+writes it but the four dot-eating sites, and only when a dot is eaten. **It is
+also the one this port evicted into a cartridge text plane**, which a debugger
+cannot write, because the planes are cart-to-console. The same decision that
+made this port possible is the one that ruled out the obvious injection.
+
+So the corruption is applied to `DMCRCV` directly, which is both smaller and
+more honest: what is under test is the netcode's response to a checksum that
+does not match, not the game's ability to hold a corrupted byte.
+
+### 12.2 Two harness bugs on the way
+
+**`playdiff.py` compared a wrapping tick.** The tick on the wire is eight bits,
+so keyed on it directly, ticks 600 and 88 and 344 are the same key and every
+lap overwrites the last. A comparison that should have spanned nine hundred
+ticks silently spanned the final 256, and reported "0 differ" on a pair that
+had demonstrably diverged. It reconstructs the lap now — Combat §4.19 says the
+relay has to do the same, and for the same reason.
+
+**The verdict raced the relay's own logging.** It compared the last mismatch's
+position in the file against the file's length; the verdict runs when the
+consoles exit and the relay is still writing, so the last mismatch *was* the
+last line and the gate reported "nothing repaired" on a run that had recovered
+forty seconds earlier. It measures in TICKS now, which do not move once
+written.
+
+---
+
+## 13. The session blocks the frame loop, and what that costs
+
+The boot bank's session is **blocking**: `FNGO` waits out each transaction, and
+while it waits the console is not drawing a frame. With no relay listening,
+`make frames` measured
+
+```
+stock:  LINES 261:1327 262:173
+split:  LINES 261:1102 262:30 358:3 420:7 421:358
+```
+
+— 358 frames of 421 lines, about six seconds of a rolling picture while the
+console read an appkey, opened a socket and waited to be paired.
+
+Two things were done and only one of them is a fix.
+
+**The wait is bounded.** `DMSTPOLL` is 64, about a second: pairing is instant
+once the second console connects, so a longer budget only helps a console
+waiting for an opponent who is not coming — and that is the case that should be
+paced, not extended.
+
+**`make frames` skips the boot.** The boot bank does not run the game's frame
+loop at all, so measuring it there would be measuring the handshake rather than
+the port; the sibling harness carries the same allowance. It is a SKIP with a
+stated bound rather than a filter on odd frames, and **everything after it is
+required to match stock exactly**.
+
+That second change immediately made the gate weaker in a way worth recording.
+The drive schedule was absolute, so with the boot skipped every switch press
+landed inside the skip: the distribution collapsed from `261:1327 262:173` to a
+flat `261:1500` and the gate went on passing, having quietly stopped exercising
+RESET, SELECT and both sticks. **A gate that measures a tamer workload than it
+did yesterday is a gate that got weaker without saying so.** The schedule is
+relative to the skip now.
+
+### 13.1 The real fix, not done
+
+Pace the session against the boot bank's own display kernel — one poll per
+drawn frame — so a player can wait for an opponent for as long as they like
+with a stable picture and something on screen saying so. `src/dmdisp.inc` is in
+the tree for exactly that and is not wired up: the boot bank draws no text yet,
+and the screen is a colour rather than a word.
+
+That is the largest single piece of remaining work, and it is cosmetic in the
+sense that nothing about the match depends on it — and not cosmetic at all in
+the sense that a player with no opponent currently sees six seconds of rolling
+picture and then a game that started without telling them.

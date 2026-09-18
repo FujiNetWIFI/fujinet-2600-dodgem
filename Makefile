@@ -23,7 +23,7 @@ DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 1500
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby session rig rig-hold ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack stall det sim lobby session rig rig-hold rig-repair ladder clean
 
 all: dodgem
 
@@ -187,6 +187,12 @@ rig: dodgem
 # identically on both consoles, which it can only do if it is on the wire.
 rig-hold: dodgem
 	SECS=$(SECS) RIG_HOLD=select test/run_rig.sh
+
+# ...and the one that asserts the OPPOSITE of every other gate: console 1 is
+# built to corrupt its own checksum for eight ticks, so the relay MUST see
+# mismatches -- and they must stop.
+rig-repair: dodgem
+	SECS=$(SECS) DMRSYT=60 RIG_LUA=play test/run_rig.sh
 
 ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack stall det sim lobby session rig
 

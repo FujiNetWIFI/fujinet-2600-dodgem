@@ -56,7 +56,10 @@ mkdir -p build/rig
 # names: the relay refuses a duplicate by renaming it, and a rig that relied on
 # that would be testing the rename.
 for n in 1 2; do
+    # DMRSYT goes to console 1 ONLY. A checksum both consoles corrupt
+    # identically is a checksum they still agree about.
     PLAYER="PLAYER$n" ENDPOINT="N:TCP://127.0.0.1:$RELAY_PORT/" \
+        DMRSYT="$([ "$n" = 1 ] && echo "${DMRSYT:-0}" || echo 0)" \
         ./build.sh dodgem > "build/rig/build$n.log" 2>&1
     cp build/dodgem.bin "build/rig/${RIGDIR:-fn}dodgem$n.bin"
 done
@@ -144,6 +147,50 @@ echo "   $(grep -c "CRC MISMATCH" build/rig/relay.log || true) CRC MISMATCH line
 # emu/play.lua's verdict is a different question, so it gets a different block:
 # not "did these two agree" -- the relay answers that -- but WHICH CELL WENT
 # FIRST. The state dump is megabytes, so only the diagnosis is printed.
+if [ -n "${DMRSYT:-}" ] && [ "${DMRSYT:-0}" != 0 ]; then
+    # THE REPAIR GATE ASKS THE OPPOSITE QUESTION of every other one: console 1
+    # was built to corrupt its OWN checksum for eight ticks, so mismatches are
+    # the point and silence would mean the injection missed. What has to be
+    # true is that they STOPPED, and that the console noticed.
+    echo
+    n=$(grep -c "CRC MISMATCH" build/rig/relay.log || true)
+    echo "== the relay saw $n CRC MISMATCH line(s) =="
+    grep -m3 "CRC MISMATCH" build/rig/relay.log || true
+    python3 tools/playdiff.py build/rig/c1.out build/rig/c2.out || true
+    echo
+    if [ "$n" = 0 ]; then
+        echo "  FAIL the relay never saw the injected disagreement -- the" \
+             "corruption did not reach the wire"
+        echo "REPAIR FAIL"; exit 1
+    fi
+    echo "  ok   the relay saw the injected disagreement ($n line(s))"
+
+    # DID THEY STOP? Measured in TICKS, not in log lines.
+    #
+    # The first version compared the last mismatch's position in the file
+    # against the file's length, and raced the relay's own logging: the verdict
+    # runs when the consoles exit and the relay is still writing, so the last
+    # mismatch WAS the last line and the gate reported "nothing repaired" on a
+    # run that had recovered forty seconds earlier.
+    #
+    # The tick a mismatch names does not move once written, and the highest
+    # tick the consoles reached is in their own output. A window of mismatches
+    # well below the end of the match is the claim being made.
+    hi=$(grep -o "CRC MISMATCH tick [0-9]*" build/rig/relay.log \
+         | grep -o "[0-9]*$" | sort -n | tail -1)
+    lo=$(grep -o "CRC MISMATCH tick [0-9]*" build/rig/relay.log \
+         | grep -o "[0-9]*$" | sort -n | head -1)
+    end=$(grep -oh "ticks=[0-9]*" build/rig/c1.out | grep -o "[0-9]*" | tail -1)
+    echo "  ..  mismatches span ticks $lo-$hi; the match ran ${end:-?} ticks"
+    if [ -z "${end:-}" ] || [ "$end" -le "$hi" ]; then
+        echo "  FAIL the mismatches ran to the end of the match -- nothing repaired"
+        echo "REPAIR FAIL"; exit 1
+    fi
+    echo "  ok   the mismatches STOPPED, and the match ran on for" \
+         "$((end - hi)) more ticks"
+    echo "REPAIR PASS"; exit 0
+fi
+
 if [ "${RIG_LUA:-rig}" = "play" ] && [ -n "${PLAY_INJECT:-}" ]; then
     # The repair gate asks the OPPOSITE question: one console was deliberately
     # corrupted, so mismatches are the point and silence would mean the
@@ -160,6 +207,28 @@ if [ "${RIG_LUA:-rig}" = "play" ] && [ -n "${PLAY_INJECT:-}" ]; then
     grep -q "CRC MISMATCH" build/rig/relay.log \
         || echo "  FAIL the relay never saw the injected desync at all"
     echo "REPAIR FAIL"; exit 1
+fi
+
+# THE TWO CONSOLES MUST HOLD DIFFERENT ROLES.
+#
+# Not a nicety: the relay names one host and one guest, and the mixer puts the
+# host's stick in SWCHA's high nibble on BOTH machines. If both believe they
+# are the host they both put their OWN stick there -- and every checksum still
+# agrees, because the error is symmetric. It passed for a whole afternoon.
+# Only one of them can be right about this, which is exactly what makes it
+# worth asserting.
+if grep -qh "^PLAY \|^SNAP " build/rig/c1.out build/rig/c2.out 2>/dev/null; then
+    r1=$(grep -ohm1 "ent=\$[0-9A-F][0-9A-F]" build/rig/c1.out | head -1)
+    r2=$(grep -ohm1 "ent=\$[0-9A-F][0-9A-F]" build/rig/c2.out | head -1)
+    if [ -n "$r1" ] && [ -n "$r2" ]; then
+        b1=$(( 0x${r1#ent=$} & 2 )); b2=$(( 0x${r2#ent=$} & 2 ))
+        if [ "$b1" = "$b2" ]; then
+            echo "  FAIL both consoles hold the same role ($r1 $r2) -- one of" \
+                 "them should be the guest"
+        else
+            echo "  ok   the two consoles hold DIFFERENT roles ($r1 $r2)"
+        fi
+    fi
 fi
 
 if [ "${RIG_LUA:-rig}" = "play" ]; then

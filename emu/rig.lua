@@ -203,23 +203,31 @@ _G._rg = sp:install_write_tap(0x0296, 0x0296, "tim64t", function(off, data, mask
         -- and the positions.
         --
         -- WHAT IS IN HERE IS WHAT DMCRC COVERS, and for the same reasons.
-        -- The variation, the two-humans flag and the end swap first, because
-        -- two consoles that disagree about any of the three draw visibly
-        -- different games while agreeing about every coordinate. Then the
-        -- ball's three 16-bit axes and their fractions, both players'
-        -- positions, the serve state, the scores and the match state.
+        -- The mode bits and the level first, because two consoles that
+        -- disagree about either draw visibly different games while agreeing
+        -- about every coordinate -- and SELECT walks BOTH, so both are here.
+        -- Then the run state and active player, the dodging car and its lane,
+        -- the chase car and the round counters, the column mask, and player
+        -- A's saved block.
         --
-        -- The shadows are NOT here. DMSWA, DMSWB and DMTRIG are what the
+        -- The shadows are NOT here. DMSWA, DMSWB and the triggers are what the
         -- netcode FILLS from the wire, not state the simulation owns, and a
         -- cell the netcode writes is not a cell the netcode should check.
-        for _, a in ipairs({0x80, 0x81, 0xD0, 0x84,
-                            0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x91,
-                            0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
-                            0x98, 0x99, 0x9A, 0x9B,
-                            0xA0, 0xB4, 0xC5, 0xC6, 0xC7, 0xC8,
-                            0xCA, 0xCB, 0xCC, 0xD1, 0xD2}) do
-            b[#b + 1] = string.format("%02X", sp:readv_u8(a))
-        end
+        -- Neither is $9F: it carries the BLACK-AND-WHITE switch, which is a
+        -- local preference here, so two consoles whose players set it
+        -- differently hold different bytes for ever while agreeing about
+        -- everything (PORTING.md 6.2).
+        for a = 0x81, 0x86 do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
+        for a = 0x94, 0x98 do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
+        for a = 0x9B, 0x9E do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
+        for a = 0xA2, 0xA5 do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
+        b[#b + 1] = string.format("%02X", sp:readv_u8(0xAB))
+        for a = 0xB5, 0xBB do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
+        -- ...and the dot bitmap, out of the cartridge text plane it was
+        -- evicted into. Reading it HERE is what makes the rig prove the
+        -- eviction as well as the lockstep: a poke lost through the blit port
+        -- on one console and not the other is a desync this line can see.
+        for a = 0x1AE0, 0x1AE8 do b[#b + 1] = string.format("%02X", sp:readv_u8(a)) end
         -- WHAT THE TWO CONSOLES MUST AGREE ABOUT, AND WHAT THEY MUST NOT.
         --
         -- `SNAP` carries the simulation and nothing else: the tick, the

@@ -36,12 +36,21 @@ for k, t in pairs({ select = { ":SWB", "Select Game" }, reset = { ":SWB", "Reset
     FLD[k] = p and p.fields[t[2]] or false
 end
 local function press(k, on) if FLD[k] then FLD[k]:set_value(on and 1 or 0) end end
+-- THE SCHEDULE IS RELATIVE TO THE SKIP, not to power-on.
+--
+-- With the boot window skipped, an absolute schedule puts every switch press
+-- inside the skip: the distribution collapsed from 261:1327 262:173 to a flat
+-- 261:1500 and the gate went on passing, having quietly stopped exercising
+-- RESET, SELECT and both sticks. A gate that measures a tamer workload than it
+-- did yesterday is a gate that got weaker without saying so.
+local DRIVE = tonumber(os.getenv("FRAME_SKIP") or "480")
 local dframe = 0
 _G._fr_drive = emu.add_machine_frame_notifier(function()
     dframe = dframe + 1
-    press("select", (dframe > 60 and dframe < 70) or (dframe > 110 and dframe < 120))
-    press("reset", dframe > 170 and dframe < 180)
-    if dframe > 200 then
+    press("select", (dframe > DRIVE + 60 and dframe < DRIVE + 70)
+                 or (dframe > DRIVE + 110 and dframe < DRIVE + 120))
+    press("reset", dframe > DRIVE + 170 and dframe < DRIVE + 180)
+    if dframe > DRIVE + 200 then
         local ph = math.floor(dframe / 17) % 2
         press("p1u", ph == 0); press("p1d", ph == 1)
         press("p2d", ph == 0); press("p2u", ph == 1)
@@ -97,8 +106,22 @@ _G._fr_bank = sp:install_write_tap(0x1D80, 0x1D8F, "bank", function(off, data, m
     switches = switches + 1
 end)
 
+-- THE BOOT IS NOT THE GAME, and this gate is about the game's frames.
+--
+-- The boot bank opens a socket, reads an appkey and waits to be paired, and
+-- each of those is a blocking transaction during which the console is not
+-- drawing a frame. That is a real cost and PORTING.md 13 is about fixing it --
+-- but measuring it here would be measuring the handshake, not the port, and
+-- the sibling harness has the same allowance for the same reason.
+--
+-- It is a SKIP with a stated bound, not a filter on odd frames: everything
+-- after it is required to match stock exactly.
+local SKIP = tonumber(os.getenv("FRAME_SKIP") or "480")
+local skipped = 0
+
 _G._fr_vs = sp:install_write_tap(0x00, 0x00, "vsync", function(off, data, mask)
     if (data & 0x02) == 0 then return end
+    if skipped < SKIP then skipped = skipped + 1; last = nil; return end
     local t = manager.machine.time:as_double()
     if last then
         local lines = math.floor((t - last) / LINE + 0.5)

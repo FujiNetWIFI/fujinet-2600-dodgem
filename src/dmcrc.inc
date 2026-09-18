@@ -92,4 +92,30 @@ DMCRCP:
 ; reach this with a JMP instead of a JSR. See the note there: it is a level of
 ; stack, and on this console a level of stack is a byte of the playfield.
         sta     DMCRCV
+
+        IF      DMRSYT
+; ---------------------------------------------------------------------------
+; THE REPAIR PROOF (`make rig-repair`). Built only when asked for, on ONE
+; console only.
+;
+; It corrupts this console's own checksum for eight ticks, which makes the PEER
+; see a disagreement and arm its repair. That is a narrower thing to inject
+; than a corrupted simulation, and it is the RIGHT thing: what is under test is
+; the netcode's response to a checksum that does not match, not the game's
+; ability to hold a corrupted byte.
+;
+; Three attempts were made at the wider version first and all three failed the
+; same way -- every cell DMCRC covers is one the game rewrites within a tick,
+; which is exactly why they are worth checksumming and exactly why a
+; corruption in one is gone before the next boundary samples it. The one cell
+; that would have held still is the dot bitmap, which this port evicted into a
+; cartridge text plane that a debugger cannot write. See PORTING.md 12.
+        lda     DMTICK
+        cmp     #DMRSYT
+        bcc     DMCRC9
+        cmp     #DMRSYT+8
+        bcs     DMCRC9
+        inc     DMCRCV
+DMCRC9:
+        ENDIF
         rts

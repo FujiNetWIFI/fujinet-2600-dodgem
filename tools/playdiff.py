@@ -1,198 +1,66 @@
 #!/usr/bin/env python3
-"""playdiff.py -- which cell went first, and at which tick.
+"""playdiff.py -- did the two consoles diverge, and did they come back?
 
-Two per-tick dumps from emu/play.lua, one per console. Lines up the ticks,
-finds the first one at which the authoritative sim state differs, and NAMES THE
-CELLS -- because "the two consoles desynced" is what the relay already says and
-is not actionable, while "$A4 TankY0 is one lower on the guest from tick 63" is.
+Reads the two `S <n> <tick> <state>` streams emu/play.lua writes and reports
+the ticks on which the simulations differ.
 
-    tools/playdiff.py build/rig/c1.out build/rig/c2.out
+IT RECONSTRUCTS THE LAP, and that is the whole reason this is a tool rather
+than a `diff`. The tick on the wire is EIGHT BITS. Keyed on it directly, tick
+600 and tick 88 and tick 344 are the same key, every lap overwrites the last,
+and a comparison that should have spanned nine hundred ticks silently spans the
+final 256 -- which reported "0 differ" on a pair that had demonstrably
+diverged. Combat's PORTING.md 4.19 says the relay has to do this too, and for
+exactly the same reason.
+
+Usage: playdiff.py c1.out c2.out
 """
 import re
 import sys
 
-# The addresses emu/play.lua dumps, in order. NOT a base plus an offset: the
-# dump has a hole in it, because $BB-$BE are the filtered LOCAL paddle
-# positions and two consoles with two hands on two paddles differ there on
-# every tick of a perfectly synchronised pair.
-# The same set emu/play.lua dumps, and it has to stay the same set: $80-$D5 is
-# the whole of Tennis's working set (the highest cell it names is $D5), less the
-# six colours, which are rebuilt every frame from the LOCAL black-and-white
-# switch, and $8A, which is scratch the netcode fills.
-CELLS = [a for a in range(0x80, 0xD6)
-         if a != 0x8A and not (0xBB <= a <= 0xC0)]
-
-# How many ticks at the end of the run must agree for a repair to count as one.
-# 120 is eight seconds at fifteen ticks a second -- long enough that a pair that
-# merely happened to coincide for a moment cannot pass.
-RECOVER_TAIL = 120
-
-# And how long the repair itself may take. Measured, repeatedly, at 4 ticks --
-# detection on the tick after the injection, the synthetic RESET captured on the
-# next boundary, delivered d ticks later, acted on immediately. 30 is that with
-# room, and it is a REAL bound: without it the gate passes a pair that took
-# half a minute to come back, which is indistinguishable to a player from not
-# coming back at all.
-REPAIR_BOUND = 30
-
-# NAMES ARE ONLY GIVEN WHERE THEY WERE DERIVED, and every one here was read out
-# of the disassembly rather than guessed. There is no commented source for this
-# game -- that is the whole of PORTING.md 1 -- so an invented name would be a
-# lie that a future reader would then chase. A blank is honest.
-NAMES = {
-    0x80: "Variation",   # 0-3; $81 is bit 0 of it
-    0x81: "TwoHumans",   # 0 = the computer plays one side
-    0x84: "FrameCnt",    # behind the lockstep gate
-    0x88: "Attract",
-    0x8C: "BallFracY", 0x8D: "BallFracX", 0x8E: "BallFracZ",
-    0x8F: "BallY",       # depth
-    0x90: "BallX",       # horizontal
-    0x91: "BallZ",       # HEIGHT -- gravity acts on this one
-    0x92: "BallVYhi", 0x95: "BallVYlo",
-    0x93: "BallVXhi", 0x96: "BallVXlo",
-    0x94: "BallVZhi", 0x97: "BallVZlo",
-    0x98: "P0Depth", 0x99: "P1Depth",
-    0x9A: "P0Horiz", 0x9B: "P1Horiz",
-    0xA0: "ServePend",
-    0xA2: "AutoServe",
-    0xA3: "SelDebounce",
-    0xB4: "LastStruck",
-    0xC1: "SwingFrame0", 0xC2: "SwingFrame1",
-    0xC5: "Points0", 0xC6: "Points1",
-    0xC7: "Games0", 0xC8: "Games1",
-    0xC9: "SoundTimer",
-    0xCA: "Server",
-    0xCB: "FreezeState",
-    0xCC: "Bounces",
-    0xCE: "StickDY", 0xCF: "StickDX",
-    0xD0: "EndSwap",     # flips every game: court = port EOR this
-    0xD1: "MsgMode",     # 3 DEUCE, $0A ADVANTAGE
-    0xD2: "SetCount",
-    0xD3: "Diff0", 0xD4: "Diff1",
-    0xD5: "PortIndex",
-}
+ROW = re.compile(r'^S (\d+) (\d+) ([0-9A-F]+)')
 
 
 def load(path):
-    """Index by the harness's boundary COUNT, and check the ROM's raw tick.
-
-    The count is authoritative: the tap fires once per completed boundary, so
-    counting them is the tick exactly. The raw VOTICK rides along only so a
-    disagreement between the two numbering schemes is visible instead of being
-    silently absorbed into the diff.
-    """
-    out, raw = {}, {}
+    out, lap, last = {}, 0, None
     for line in open(path, errors="replace"):
-        m = re.match(r"^S (\d+) (\d+) ([0-9A-F]+)$", line.strip())
-        if m:
-            n = int(m.group(1))
-            out[n] = m.group(3)
-            raw[n] = int(m.group(2))
-    return out, raw
-
-
-def addr_of(i):
-    """Dump index to zero-page address. Combat's version special-cased one
-    trailing cell; here the whole layout is CELLS, hole and all."""
-    return CELLS[i] if i < len(CELLS) else None
+        m = ROW.match(line)
+        if not m:
+            continue
+        t = int(m.group(2))
+        # A tick that jumps backwards by more than half the range is a wrap,
+        # not a reorder.
+        if last is not None and t < last - 128:
+            lap += 1
+        last = t
+        out[lap * 256 + t] = m.group(3)
+    return out
 
 
 def main():
-    (a, ra), (b, rb) = (load(p) for p in sys.argv[1:3] if not p.startswith("--"))
-    if not a or not b:
-        print("playdiff: one of the consoles printed no state at all")
-        return 1
+    a, b = load(sys.argv[1]), load(sys.argv[2])
     common = sorted(set(a) & set(b))
-    print("%d ticks from console 1, %d from console 2, %d in common"
-          % (len(a), len(b), len(common)))
-    # The two consoles number their boundaries from their own first one. If the
-    # ROM's raw tick disagrees by a constant, the dumps are simply offset and
-    # every "divergence" below is that offset; if it disagrees by a VARYING
-    # amount, the two consoles really are running different numbers of ticks.
-    off = {((ra[t] - rb[t]) & 0xFF) for t in common}
-    if off != {0}:
-        print("raw-tick offsets seen between the two dumps: %s"
-              % " ".join("%+d" % (o - 256 if o > 127 else o)
-                         for o in sorted(off)))
-    first = None
-    counts = {}
-    for t in common:
-        x, y = a[t], b[t]
-        if x == y:
-            continue
-        bad = [i for i in range(len(x) // 2)
-               if x[2 * i:2 * i + 2] != y[2 * i:2 * i + 2]]
-        for i in bad:
-            counts[addr_of(i)] = counts.get(addr_of(i), 0) + 1
-        if first is None:
-            first = t
-            print("\nFIRST DIVERGENCE at tick %d" % t)
-            for i in bad:
-                ad = addr_of(i)
-                u, v = int(x[2 * i:2 * i + 2], 16), int(y[2 * i:2 * i + 2], 16)
-                print("  $%02X %-10s  c1=$%02X  c2=$%02X  (%+d)"
-                      % (ad, NAMES.get(ad, ""), u, v, v - u))
-            # The three ticks either side, so the run-up is visible.
-            for u in [t2 for t2 in common if t - 3 <= t2 <= t + 3]:
-                print("    t%-5d %s" % (u, "SAME" if a[u] == b[u] else "DIFF"))
-    # --repair inverts the question. A correct pair NEVER diverges, so recovery
-    # cannot be tested by waiting for a bug: the harness breaks one console on
-    # purpose (PLAY_INJECT) and the assertion is that they come back together.
-    if "--repair" in sys.argv:
-        bad = [t for t in common if a[t] != b[t]]
-        tail = common[-RECOVER_TAIL:]
-        healed = all(a[t] == b[t] for t in tail)
-        print()
-        if not bad:
-            print("NO DIVERGENCE AT ALL -- the injection never landed, so this "
-                  "run proves nothing about the repair")
-            return 1
-        # EPISODES, NOT A SPAN. This used to report bad[-1] - bad[0], which is
-        # the distance from the first divergent tick to the last -- and that is
-        # not the recovery time, it is the recovery time OR the distance to any
-        # unrelated blip later in the run, whichever is larger. One divergent
-        # tick at t512 turned a four-tick repair into "recovered after 393
-        # ticks", and the number went into a commit message before anybody
-        # noticed it was measuring two different things at once.
-        #
-        # Contiguous runs of divergent ticks are grouped, with a gap of up to
-        # GAP ticks tolerated inside one episode, because a repair in progress
-        # can agree for a tick and then differ again.
-        GAP = 8
-        eps = []
-        for t in bad:
-            if eps and t - eps[-1][1] <= GAP:
-                eps[-1][1] = t
-            else:
-                eps.append([t, t])
-        first_len = eps[0][1] - eps[0][0] + 1
-        print()
-        print("diverged at tick %d, %d divergent ticks in all, in %d episode(s)"
-              % (bad[0], len(bad), len(eps)))
-        print("THE REPAIR took %d ticks (%.1f seconds at 15 a second)"
-              % (first_len, first_len / 15.0))
-        for lo, hi in eps[1:]:
-            print("  later episode at ticks %d-%d (%d ticks) -- NOT the repair; "
-                  "a separate divergence the pair also recovered from"
-                  % (lo, hi, hi - lo + 1))
-        if healed:
-            print("the last %d ticks agree byte for byte" % len(tail))
-        else:
-            print("THE LAST %d TICKS DO NOT AGREE -- no repair happened"
-                  % len(tail))
-        if first_len > REPAIR_BOUND:
-            print("THE REPAIR TOOK TOO LONG -- %d ticks against a bound of %d"
-                  % (first_len, REPAIR_BOUND))
-        return 0 if (healed and first_len <= REPAIR_BOUND) else 1
+    if not common:
+        sys.exit("playdiff: the two consoles share no ticks at all")
+    diff = [t for t in common if a[t] != b[t]]
 
-    if first is None:
-        print("\nNO DIVERGENCE -- the two consoles agree at every common tick")
+    print("playdiff: %d ticks compared (%d-%d), %d differ"
+          % (len(common), common[0], common[-1], len(diff)))
+    if not diff:
+        print("playdiff: the two simulations never diverged")
         return 0
-    print("\nevery cell that ever differed, by how many ticks:")
-    for ad in sorted(counts, key=lambda k: -counts[k]):
-        print("  $%02X %-10s %d" % (ad, NAMES.get(ad, ""), counts[ad]))
-    return 1
+
+    after = [t for t in common if t > diff[-1]]
+    # Name the first cell that went, because "they diverged" is not a
+    # diagnosis. The state is a hex string of the cells DMCRC covers.
+    t = diff[0]
+    off = next(i for i, (x, y) in enumerate(zip(a[t], b[t])) if x != y) // 2
+    print("playdiff: diverged at tick %d, cell %d of the compared set "
+          "(%s vs %s)" % (t, off, a[t][off * 2:off * 2 + 2],
+                          b[t][off * 2:off * 2 + 2]))
+    print("playdiff: %d ticks of divergence, then %d ticks in agreement"
+          % (len(diff), len(after)))
+    return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())

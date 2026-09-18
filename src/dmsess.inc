@@ -18,6 +18,21 @@
 
 STARTLEN EQU    15              ; len + type + 13 bytes of START payload
 
+; How many times to ask the relay whether it has paired us.
+;
+; EACH POLL IS A BLOCKING TRANSACTION AND COSTS ROUGHLY A FRAME, and while it
+; runs the console is not drawing one -- `make frames` measured 358 frames of
+; 421 lines during a boot with no relay listening, against stock's steady 261.
+; So this is a budget, not a patience setting: about a second of waiting for a
+; relay that is not there, and instant when one is, because pairing happens the
+; moment the second console connects.
+;
+; The real answer is to pace the wait against the boot bank's own display
+; kernel -- one poll per drawn frame -- so a player can wait for an opponent
+; for as long as they like with a stable picture. dmdisp.inc is here for that
+; and is not wired up yet; see PORTING.md 13.
+DMSTPOLL EQU    64
+
 ; ---------------------------------------------------------------------------
 ; DMBENT -- the boot bank's entry. DMCOLD in the tail arms the cartridge and
 ; jumps here.
@@ -116,15 +131,26 @@ DMB2:
         sta     DMRWAT
         lda     #NS_WISS
         sta     DMNST
+
+; DMENT BEFORE DMRDN, because DMROLE *IS* DMRDN.
+;
+; The union is documented three files away and the seeding block zeroed the
+; record cursor first, which threw the role away before reading it -- so the
+; guest came up as a host, both consoles put their own stick in the high
+; nibble, and every checksum agreed because the error was symmetric.
+;
+; The lesson is not "be careful with unions". It is that a union whose two
+; halves are named differently reads as two cells, and this ordering is the
+; only thing keeping it honest.
+        lda     DMROLE
+        and     #1
+        asl                     ; 0 -> $00 host, 1 -> $02 guest
+        ora     #DME_NET
+        sta     DMENT
+
         lda     #0
         sta     DMERR
         sta     DMRDN
-; DMENT last, because it is the byte that says a match is running: setting it
-; before the rest would let a frame in on half-seeded state.
-        lda     DMROLE
-        and     #DME_ROLE
-        ora     #DME_NET
-        sta     DMENT
         jmp     DMHAND
 
 ; ---- every failure arrives here ----
@@ -250,14 +276,14 @@ DMHN:   lda     DMNAME,x
 ; uses belongs to a match.
 ; ---------------------------------------------------------------------------
 DMSTART:
-        ldy     #0
+        ldy     #256-DMSTPOLL
 DMSTW:
         jsr     DMNSTAT         ; how many bytes are waiting?
         bcc     DMSTF
         cmp     #STARTLEN
         bcs     DMSTR
         iny
-        bne     DMSTW           ; ~256 polls, then give up and play alone
+        bne     DMSTW           ; DMSTPOLL polls, then give up and play alone
 DMSTF:  clc
         rts
 
