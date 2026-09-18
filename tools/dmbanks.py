@@ -55,6 +55,11 @@ ENTRIES = {
            (0xF0CA, "the cold path")],
 }
 
+# Banks that read the synthetic controller, and therefore have to fill it at
+# the head of their band. The shadows are band-local and do not survive the
+# kernel; see src/dmmix.inc.
+NEEDS_MIX = {"G0", "G1", "G3"}
+
 # The bank-local switch stubs the seam patches jump to. A branch cannot reach
 # another bank, but it can reach one of these.
 STUBS = {
@@ -211,8 +216,14 @@ def main():
             for i, (tgt, why) in enumerate(ents[1:], 1):
                 dispatch.append("DMEN%d:  jmp     L%04X           ; entry %d: %s"
                                 % (i, tgt, i, why))
+        if bank in NEEDS_MIX:
+            # FIRST, and inside the ORG. Fill the synthetic controller before
+            # dispatching, because the vblank band reads it at $F05C -- twelve
+            # instructions in -- and the overscan band at $F4B3.
+            dispatch.insert(0, "        jsr     DMMIX")
+            cursor += 3
         out.extend(dispatch)
-        cursor += sum(3 if l.strip().startswith(("jmp", "DMEN")) else 2
+        cursor += sum(3 if l.strip().startswith(("jmp", "DMEN", "jsr")) else 2
                       for l in dispatch)
 
         # ---- the bank-local switch stubs ----
@@ -269,6 +280,9 @@ def main():
         # carries its own copy -- Dragster's PORTING.md 4, where StageRace
         # jumped into the middle of PositionSprites and 72 bytes had to live
         # in both banks. Fifty bytes here, against hundreds spare.
+        if bank in NEEDS_MIX:
+            out.append("")
+            out.append('        INCLUDE "dmmix.inc"')
         if any("DMPOKE" in l for l in out):
             out.append("")
             out.append('        INCLUDE "dmpoke.inc"')
