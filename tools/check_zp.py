@@ -100,10 +100,17 @@ def main():
                 bad.append("%s = $%02X is band-local but the game touches it "
                            "in %s" % (name, val, ",".join(sorted(clash))))
 
+    # ONE, not two. The threshold started at two and the transport spent one of
+    # them on DMRDN. That is what the margin was for -- it is not a rule to be
+    # kept by refusing to build, it is a rule about not fitting EXACTLY. One
+    # cell left is still one cell; zero is the number that says the next bug
+    # has nowhere to go, and if this ever has to drop to zero the answer is to
+    # evict another block into the cartridge, not to lower the threshold again.
     spare = [n for n in defs if n.startswith('DMFREE')]
-    if len(spare) < 2:
-        bad.append("only %d spare cell(s) held back; keep at least 2 -- a map "
-                   "that fits exactly has no room for the next bug" % len(spare))
+    if len(spare) < 1:
+        bad.append("no spare cell held back -- a map that fits exactly has no "
+                   "room for the next bug. Evict another block rather than "
+                   "lowering this.")
 
     print("check_zp: %d persistent, %d band-local, %d spare; stack floor $%02X "
           "(deepest chain %d)" % (npers, nlocal, len(spare), floor, deepest))

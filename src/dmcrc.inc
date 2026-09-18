@@ -87,4 +87,9 @@ DMCRCP:
         adc     DMDOTS,x
         dex
         bpl     DMCRCP
+
+; ...and the store belongs here rather than in the caller, so that DMCAP can
+; reach this with a JMP instead of a JSR. See the note there: it is a level of
+; stack, and on this console a level of stack is a byte of the playfield.
+        sta     DMCRCV
         rts

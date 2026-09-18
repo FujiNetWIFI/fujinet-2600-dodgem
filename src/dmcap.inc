@@ -54,7 +54,14 @@ DMCAP:
         sta     DMLOC0
 
 ; The checksum, at the same instant and not a moment later.
-        jsr     DMCRC
-        sta     DMCRCV
+;
+; A TAIL CALL, and it is not a micro-optimisation. The stack on this console is
+; the top six bytes of the same 128 that hold the game, and the chain
+; DMMIXV -> DMCAP -> DMCRC -> DMCRCR is four levels: eight bytes against six
+; available, running into DMTMP and then the last byte of the sixth playfield
+; stream. An overrun there does not crash -- it corrupts the track, slowly, and
+; only in a match. DMCRC stores DMCRCV itself and returns to DMMIXV, which
+; removes a level for nothing.
+        jmp     DMCRC
 DMCAP9:
         rts

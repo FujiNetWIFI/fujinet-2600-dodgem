@@ -299,6 +299,14 @@ python3 tools/dmbanks.py build/dm_org.lst build/dm_org.asm build
 # at into build/tail.inc, which every bank includes -- so a bank cannot be
 # assembled against a transport that has not been placed yet.
 assemble dmtail
+# The banks are assembled separately, so they need the tail's addresses as
+# constants -- and a hand-maintained list of them would go stale in silence the
+# moment a byte is added to any routine above them. Read them back out of the
+# tail's own listing instead.
+python3 tools/mktail.py build/dmtail.lst \
+    FNRW,FNARM,FNCHK,FNBEG,FNPB,FNPW,FNGO,FNACK,\
+FNROWA,FNCHR,FNENDR > build/tail.inc
+tail -1 build/tail.inc | sed 's/^; */  tail: /'
 p2bin build/dmtail.p build/dmtail.bin -r '$1800-$1FFF' -l 255 -q
 
 for b in $BANKS; do
@@ -328,6 +336,12 @@ rm -f build/dmtail.p
 # Every label in the pinned span is at one address in every bank. A pointer
 # built in one bank and followed in another depends on it, and the failure is
 # silent until the event that follows the pointer happens.
+# The stack is the top six bytes of the same 128 that hold the game, so every
+# level the netcode nests is a byte of Dodge 'Em. Static, because the runtime
+# version needs a networked match to exercise these paths at all.
+python3 tools/dmstack.py build/dmg0.lst build/dmg1.lst build/dmg2.lst \
+    build/dmg3.lst build/dmboot.lst
+
 python3 tools/check_pins.py $((0xFE2E)) $((0xFED7)) \
     build/dmg0.lst build/dmg1.lst build/dmg2.lst build/dmg3.lst
 

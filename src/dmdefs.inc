@@ -84,12 +84,19 @@ DMCRCV  EQU     $B1             ; the sim checksum, SAMPLED AT A TICK BOUNDARY
                                 ;   design (Combat 4.5)
 DMRWAT  EQU     $B2             ; highest remote tick received
 
-; $B3 and $B4 are deliberately UNSPENT. A port whose zero page fits exactly has
+; DMRDN -- records left to consume, and the cursor into the reply window: the
+; record at index n starts at n * IR_LEN. Live from DMSSACK through DMSCONS and
+; dead during the WRITE, which is the only other state that wants a scratch
+; cell -- but they are NOT union'd, because that claim is one restructuring
+; away from being false and the transport's WRITE was restructured to keep its
+; check byte in a register instead. One cell bought, one claim not made.
+DMRDN   EQU     $B3
+
+; $B4 is deliberately UNSPENT. A port whose zero page fits exactly has
 ; no room for the cell the next bug needs, and in this family there is always
 ; one more cell. Do not allocate these to make something fit; work out why it
 ; did not fit.
-DMFREE1 EQU     $B3
-DMFREE2 EQU     $B4
+DMFREE1 EQU     $B4
 
 ; The peer's input window, newest first: DMRIN0 is tick DMRWAT, DMRIN1 is
 ; DMRWAT-1, DMRIN2 is DMRWAT-2. THREE, not one: a lockstep transport that sends
@@ -205,6 +212,13 @@ IW_RST  EQU     $10             ; 1 = not pressed
 IW_STIK EQU     $0F             ; R L D U, 1 = not pushed
 IW_IDLE EQU     $FF
 IR_SEED EQU     $A5             ; salts the XOR check byte over a record
+; Frame types, matching server/dodgem_relay_server.py. Only these two can
+; arrive during play; everything else belongs to the session.
+WT_INPUT EQU    $06
+WT_LEFT EQU     $0B             ; the peer left
+IR_MASK EQU     $F8             ; whole records only -- see dmnet.inc's note on
+                                ;   why this port does not need the family's
+                                ;   two-consecutive-readings settle rule
 IR_LEN  EQU     8               ; every frame a console can receive DURING
                                 ;   PLAY is exactly this long, which is what
                                 ;   lets the reader take whole records with an

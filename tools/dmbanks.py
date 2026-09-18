@@ -214,6 +214,7 @@ def main():
                    (bank, len(runs), WINDOW))
         out.append('        INCLUDE "fujinet.inc"')
         out.append('        INCLUDE "cfg.inc"')
+        out.append('        INCLUDE "tail.inc"')
         out.append('        INCLUDE "dmdefs.inc"')
         out.append("")
         # Synthesise the pointer-target labels this bank can define.
@@ -284,6 +285,11 @@ def main():
             for i, (tgt, why) in enumerate(ents[1:], 1):
                 dispatch.append("DMEN%d:  jmp     L%04X           ; entry %d: %s"
                                 % (i, tgt, i, why))
+        if any(lo <= 0xF244 <= hi for lo, hi in runs):
+            # In front of the spin, not after it (Tennis 2.2): everything the
+            # loop does not use is waited out by code that was going to wait.
+            dispatch.insert(0, "        jsr     DMWAIT")
+            cursor += 3
         out.extend(dispatch)
         cursor += sum(3 if l.strip().startswith(("jmp", "DMEN", "jsr")) else 2
                       for l in dispatch)
@@ -385,6 +391,23 @@ def main():
         # vblank chain's gate is folded into DMTOG1 in G0 instead, so the two
         # live in different banks and neither is carried where it would not
         # resolve.
+        # THE TRANSPORT LIVES IN THE KERNEL BANK, with the spin it is stepped
+        # in front of.
+        #
+        # It was first put in the vblank bank, where the room is -- and the
+        # room was not there: 340 bytes of state machine on top of the clock,
+        # the checksum, the capture and both halves of the mixer pushed that
+        # bank 31 bytes into the pinned table span.
+        #
+        # The kernel bank is entered AT ITS SPIN ($F244, `LDA INTIM / BNE`), so
+        # stepping the machine from its entry dispatcher puts the work in front
+        # of exactly the same wait, with 1189 bytes free to do it in. The
+        # mailbox at $1D00-$1FFF is fixed and visible from every bank, so the
+        # netcode works from either; it should run where the room is.
+        if any(lo <= 0xF244 <= hi for lo, hi in runs):
+            out.append("")
+            out.append('        INCLUDE "dmnet.inc"')
+
         if any(lo <= 0xF4C6 <= hi for lo, hi in runs):
             out.append("")
             out.append('        INCLUDE "dmgate.inc"')
