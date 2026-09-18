@@ -107,6 +107,12 @@ FH_BDL  EQU     $F7             ; destination, low (a text ROW for TEXT/PATH)
 FH_BDH  EQU     $F8             ; ...high
 FH_BCNT EQU     $F9             ; count
 FH_BGO  EQU     $FA             ; data = the transform; fire
+FNBGEN  EQU     $1F19           ; bumped after a blit has actually LANDED.
+                                ;   There is no queue: a second blit fired
+                                ;   before the first has run loses the first
+                                ;   on hardware and notices nothing in
+                                ;   emulation, where the blit happens inside
+                                ;   the store. Poll this between blits.
 FB_RAW  EQU     0
 FB_TEXT EQU     1               ; cnt ASCII bytes of the reply -> text row dst
 FB_PATH EQU     7               ; cnt chars of the path buffer -> text row dst

@@ -81,7 +81,8 @@ checkdefs() {
     python3 "$VCS/tools/checkdefs.py" \
         "$VCS/firmware/include/fuji_mailbox.h" src/fujinet.inc \
         --extra FB_POKE=FN_BLIT_POKE,FB_TCELL=FN_BLIT_TCELL,\
-FB_RAW=FN_BLIT_RAW,FB_TEXT=FN_BLIT_TEXT,FB_PATH=FN_BLIT_PATH
+FB_RAW=FN_BLIT_RAW,FB_TEXT=FN_BLIT_TEXT,FB_PATH=FN_BLIT_PATH,\
+FNBGEN=FN_B_BLITGEN
 }
 
 # An image carrying "FUJI" at $1F10 promises it is a FujiNet client, so the

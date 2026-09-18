@@ -148,7 +148,7 @@ NOT_A_POINTER = [(0xF052, "A9 FF", "seeds the dot bitmap, not a pointer high byt
 # ---------------------------------------------------------------------------
 
 EVICTED = [
-    (0xF054, "95 AC", "jsr     DMSEEDD", "seed all nine rows to $FF"),
+    (0xF054, "95 AC", "jsr     DMPOKED", "LF032 seeds row X to $FF"),
     (0xF5AB, "B5 BC", "lda     DMSAVB,x", "LF5A0 swap, read B"),
     (0xF5B5, "95 BC", "jsr     DMPOKEB", "LF5A0 swap, write B"),
     (0xF897, "B5 AC", "lda     DMDOTS,x", "dot test, turn point 1"),
