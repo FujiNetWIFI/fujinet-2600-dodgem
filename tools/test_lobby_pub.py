@@ -28,9 +28,9 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _SRV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "server", "tennis_relay_server.py")
+                    "..", "server", "dodgem_relay_server.py")
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("tennis_relay_server", _SRV)
+_spec = _ilu.spec_from_file_location("dodgem_relay_server", _SRV)
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 PROTO = _mod.PROTO
@@ -69,12 +69,12 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     relay = subprocess.Popen(
-        [sys.executable, os.path.join(HERE, "server/tennis_relay_server.py"),
+        [sys.executable, os.path.join(HERE, "server/dodgem_relay_server.py"),
          "--host", "127.0.0.1", "--port", "9641",
          "--lobby-url", "http://127.0.0.1:%d/server" % port,
          # A short keepalive, so the test does not take five minutes.
-         "--game-name", "Tennis",
-         "--server-name", "Tennis Netplay"],
+         "--game-name", "Dodge 'Em",
+         "--server-name", "Dodge 'Em Netplay"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         for _ in range(100):
@@ -87,7 +87,7 @@ def main():
             return 1
         p = posts[0]
         check(p.get("status") == "online", 'the first POST says status "online"')
-        check(p.get("game") == "Tennis", "it publishes the game name")
+        check(p.get("game") == "Dodge 'Em", "it publishes the game name")
         check(isinstance(p.get("appkey"), int) and p["appkey"] > 0,
               "it publishes a nonzero appkey (the Lobby rejects zero)")
         check(p.get("maxplayers") == 2, "it publishes two seats")

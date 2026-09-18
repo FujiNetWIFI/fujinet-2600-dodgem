@@ -23,7 +23,7 @@ DET_FRAMES    ?= 3000
 FRAME_COUNT   ?= 900
 FRAME_COUNT_IN ?= 1800
 
-.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack det ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors banks probe echo dodgem frames inputs slack det sim lobby ladder clean
 
 all: dodgem
 
@@ -143,7 +143,20 @@ inputs: dodgem
 slack: dodgem
 	test/run_slack.sh $(FRAME_COUNT_IN)
 
-ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack det
+# ---------------------------------------------------------------- M5a
+# The relay protocol, with no emulator anywhere -- two simulated consoles
+# against a fresh server. It runs in about a second, so it is the one to run
+# after every edit to server/.
+sim:
+	python3 tools/dm_client_sim.py
+
+# The Lobby registration contract, against a MOCK on an ephemeral port.
+# NEVER production: this family has rewritten a machine-wide appkey by
+# pointing a test at the real Lobby before now.
+lobby:
+	python3 tools/test_lobby_pub.py
+
+ladder: defs verify-org zp phase anchors banks probe dodgem frames inputs slack det sim lobby
 
 defs:
 	./build.sh defs
