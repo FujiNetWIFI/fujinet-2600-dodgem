@@ -170,10 +170,23 @@ if [ "${1:-}" = "zp" ]; then
     exit 0
 fi
 
+# ---------------- the patch map is anchored where it says ----------------
+#
+# Before anything builds on the map: every declared site is an instruction
+# boundary carrying the declared bytes. The anchor is an address and its
+# opcodes, not a line number of the generated disassembly -- see the header of
+# tools/patches.py for why, given 51 sites against Tennis's handful.
+if [ "${1:-}" = "anchors" ]; then
+    [ -f rom/dodgem.asm ] || disasm
+    [ -f build/dm_org.lst ] || "$0" verify-org
+    python3 tools/check_anchors.py rom/dodgem.bin build/dm_org.lst rom/dodgem.asm
+    exit 0
+fi
+
 # ---------------- the bank map, computed ----------------
 if [ "${1:-}" = "phase" ]; then
     [ -f build/dm_org.lst ] || "$0" verify-org
-    ( cd tools && python3 dmphase.py ../rom/dodgem.bin ../build/dm_org.lst )
+    python3 tools/dmphase.py rom/dodgem.bin build/dm_org.lst
     exit 0
 fi
 

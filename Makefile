@@ -20,7 +20,7 @@ FUJI_FIRMWARE ?= $(HOME)/Workspace/fn-2600
 VCS           ?= $(FUJI_FIRMWARE)/pico/atari-2600
 SECS          ?= 30
 
-.PHONY: all disasm verify-org defs zp phase ladder clean
+.PHONY: all disasm verify-org defs zp phase anchors ladder clean
 
 all: verify-org
 
@@ -64,7 +64,15 @@ zp: verify-org
 phase: verify-org
 	./build.sh phase
 
-ladder: defs verify-org zp phase
+# ---------------------------------------------------------------- M0e
+# The 51 declared patch sites are where patches.py says they are. Anchored on
+# addresses and opcodes rather than line numbers: rom/dodgem.asm is generated,
+# so its line numbers move whenever tools/dodgem.cfg changes, and re-anchoring
+# 51 sites by hand after every experiment is a cost with no benefit.
+anchors: verify-org
+	./build.sh anchors
+
+ladder: defs verify-org zp phase anchors
 
 defs:
 	./build.sh defs
